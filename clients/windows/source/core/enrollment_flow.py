@@ -6,7 +6,16 @@ It reuses the original account-scoped HMAC journal and official window gates.
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
+import sys
 from typing import Sequence
+
+# The desktop is also launched from clients/windows/source without an installed
+# repository package. PyInstaller embeds the shared contract with --paths.
+if not getattr(sys, "frozen", False):
+    _root = Path(__file__).resolve().parents[4]
+    if (_root / "contracts" / "enrollment_evidence.py").is_file() and str(_root) not in sys.path:
+        sys.path.insert(0, str(_root))
 
 from core.course_models import ScheduleSnapshot, offering_matches
 from core.enrollment import (
