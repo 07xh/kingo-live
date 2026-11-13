@@ -52,11 +52,12 @@ def build_cfg(base: str) -> dict:
 
 
 def main() -> int:
-    srv, port = kingo_mock.serve(0, full_first=2)
+    srv, port = kingo_mock.serve(0, full_first=0)
     base = f"http://127.0.0.1:{port}"
     log = qlog.build("e2e_kingo", os.path.join(tempfile.gettempdir(), "qk-kingo-e2e"))
     log.info(f"mock 青果启动 {base}")
 
+    os.environ['KINGO_INTENT_DB'] = os.path.join(tempfile.mkdtemp(prefix='qk-test-intent-'), 'journal.sqlite3')
     eng = Engine(build_cfg(base), log)
     res = eng.run()
     ok = [r for r in res if r["code"] in ("unknown",)]
@@ -76,8 +77,8 @@ def main() -> int:
         "登录加密通过服务端校验": st.crypto_ok,
         "两账号均登录": st.logins >= 2,
         "两门均待官方核验": len(ok) == 2,
-        "命中满员重试": any(r["attempts"] >= 2 for r in ok),
-        "选课接口被打": st.grab_calls >= 4,
+        "每个目标只发送一次": all(r["attempts"] == 1 for r in ok),
+        "每账户仅一次提交": st.grab_calls == 2,
         "两账号分别保留待核验": accounts_ok == 2,
         "解密出的params含用户名": "MjAyMz" in st.last_params or "_u" in st.last_params,
     }
