@@ -23,7 +23,7 @@ import time
 from urllib.parse import quote
 
 from ..kingo_des import str_enc
-from ..net import NetError, Session
+from ..net import NetError
 from .base import AUTH, CONFLICT, ENROLLED, ERR, FULL, OK, Adapter, GrabResult
 
 DEFAULTS = {
@@ -153,14 +153,7 @@ class KingoAdapter(Adapter):
         return "/" + first
 
     def open(self) -> None:
-        self.session = Session(
-            base_url=self.base_url,
-            timeout=float(self.cfg.get("timeout", 8)),
-            retries=int(self.cfg.get("retries", 1)),
-            headers=self.cfg.get("headers") or {},
-            verify_tls=bool(self.cfg.get("verify_tls", False)),
-            logger=self.log,
-        )
+        self.session = self.make_session(self.base_url)
         try:
             t0 = time.time()
             self.session.get(self.p("entry"), timeout=8)
