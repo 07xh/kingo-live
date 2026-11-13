@@ -9,6 +9,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 from typing import Protocol, Sequence
+from pathlib import Path
+import sys
+
+if not getattr(sys, "frozen", False):
+    _root = Path(__file__).resolve().parents[4]
+    if (_root / "contracts" / "enrollment_evidence.py").is_file() and str(_root) not in sys.path:
+        sys.path.insert(0, str(_root))
+from contracts.enrollment_evidence import verify_selection, VerificationState
 
 from core.enrollment import (
     AttemptJournal, EnrollmentNotReady, Target, _read_records, _validate_targets,
@@ -121,7 +129,16 @@ async def reconcile_pending(gateway: ReadbackGateway, journal: AttemptJournal,
         results: list[RecoveryEntry] = []
         for target in ordered:
             state = journal_states[target.key]
-            selected = (target.course_id, target.class_id) in records
+            verdict = verify_selection(
+                course_id=target.course_id, class_id=target.class_id,
+                expected_account=journal.account_scope,
+                expected_semester=journal.semester,
+                observed_account=getattr(gateway, "account_scope", None),
+                observed_semester=getattr(gateway, "enrollment_semester", None),
+                official_verified=getattr(gateway, "official_enrollment_verified", False),
+                records=records,
+            )
+            selected = verdict.state is VerificationState.CONFIRMED
 
             if selected and state in ("pending", "legacy_pending", "rejected"):
                 # Never mark confirmed based on transport acknowledgement.
