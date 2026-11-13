@@ -1,6 +1,8 @@
 """Single-shot and truthful receipt safety for the standalone NCWU client."""
 import contextlib
 import io
+import os
+import tempfile
 import sys
 import unittest
 from pathlib import Path
@@ -22,14 +24,19 @@ class HsXkSafetyTests(unittest.TestCase):
             send.assert_not_called()
 
     def test_explicitly_open_window_sends_once(self):
-        with patch.object(hs_xk, "get_cookie", return_value="fictional"), \
-             patch.object(hs_xk, "pre_form", return_value=(
-                 {"status": "200", "result": {"isValidTimerange": "1"}}, {})), \
-             patch.object(hs_xk, "submit", return_value=b"{}") as send, \
-             patch.object(hs_xk, "judge"), \
-             patch.object(sys, "argv", ["hs_xk.py", "submit", "--kcdm", "TEST1"]):
-            hs_xk.main()
-            send.assert_called_once()
+        with tempfile.TemporaryDirectory() as td:
+            with patch.dict(os.environ, {"KINGO_INTENT_DB": os.path.join(td, "intents.sqlite3")}), \
+                 patch.object(hs_xk, "get_cookie", return_value="fictional"), \
+                 patch.object(hs_xk, "pre_form", return_value=(
+                     {"status": "200", "result": {"isValidTimerange": "1"}},
+                     {"xh": "fictional", "xn": "2026", "xq": "1"})), \
+                 patch.object(hs_xk, "submit", return_value=b"{}") as send, \
+                 patch.object(hs_xk, "judge"), \
+                 patch.object(sys, "argv", ["hs_xk.py", "submit", "--kcdm", "TEST1"]):
+                hs_xk.main()
+                with self.assertRaises(SystemExit):
+                    hs_xk.main()
+                send.assert_called_once()
 
     def test_success_words_are_not_enrollment_confirmation(self):
         out = io.StringIO()
