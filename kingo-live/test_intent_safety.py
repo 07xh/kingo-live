@@ -168,7 +168,14 @@ class IntentHTTPTests(selftest.LiveHTTPTests):
         cfg = self.cfg()
         engine = lc.Engine(cfg, self.rec("_incomplete"))
         original = engine._official_records
-        def incomplete(_r):
+        reads = 0
+        def incomplete(response):
+            nonlocal reads
+            reads += 1
+            # Account/semester preflight is intact. Corrupt only the official
+            # readback AFTER the single physical submission.
+            if reads == 1:
+                return original(response)
             return lc.normalized_official_rows([{"kcid": "C001"}],
                 {"course_id": "kcid", "class_id": "skbj"})
         engine._official_records = incomplete
