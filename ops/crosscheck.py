@@ -82,65 +82,88 @@ def _weight(e: Evidence) -> float:
 
 
 def fuse(target: Dict[str, str], evidence: Iterable[Evidence]) -> Verdict:
-    """Fuse all channels that answer for this exact (course_id, class_id)."""
-    cid = str(target.get("course_id", ""))
-    cls = str(target.get("class_id", ""))
+    """Compare exact teaching-class evidence; never infer success from totals.
+
+    Classless or mismatched reports are context, not proof of this class.
+    A fresh exact official selected-course record is required for a terminal
+    confirmation. Other channels still contribute to contradiction and
+    stale-cache diagnostics, but do not substitute for that official record.
+    """
+    cid = str(target.get("course_id") or "").strip()
+    cls = str(target.get("class_id") or "").strip()
+    if not cid or not cls:
+        return Verdict(cid, cls, "unknown", 0.0, 0.0, 0.0, [], [],
+                       "missing exact course or teaching-class identity",
+                       "keep_pending")
+
     rows = [e for e in evidence
-            if e.course_id == cid and (not cls or e.class_id in ("", cls))]
-    pos = neg = 0.0
-    used: List[str] = []
-    stale: List[str] = []
-    authoritative_negative = False
+            if e.course_id == cid and e.class_id == cls
+            and e.channel in CHANNEL_WEIGHTS and e.present is not None]
+    # Repeated responses from one channel are NOT independent evidence.
+    # A channel contradicting itself also cannot support confirmation.
+    by_channel: Dict[str, List[Evidence]] = {}
     for e in rows:
-        if e.present is None:
+        by_channel.setdefault(e.channel, []).append(e)
+
+    pos = neg = 0.0
+    stale: List[str] = []
+    conflicts: List[str] = []
+    official_positive = False
+    official_negative = False
+    for channel, reports in by_channel.items():
+        fresh = [e for e in reports if not e.stale]
+        considered = fresh or reports
+        opinions = {e.present for e in considered}
+        if len(opinions) > 1:
+            conflicts.append(channel)
             continue
-        used.append(e.channel)
-        if e.stale:
-            stale.append(e.channel)
-        w = _weight(e)
-        if e.present:
-            pos += w
+        present = considered[0].present
+        is_stale = not fresh
+        if is_stale:
+            stale.append(channel)
+        weight = _weight(considered[0])
+        if present:
+            pos += weight
         else:
-            neg += w
-            if e.channel == "official_list" and not e.stale:
-                authoritative_negative = True
+            neg += weight
+        if channel == "official_list" and not is_stale:
+            official_positive = present is True
+            official_negative = present is False
 
-    independent_pos = {e.channel for e in rows
-                       if e.present and not e.stale}
-    if not rows or not used:
-        v, conf, reason, action = "unknown", 0.0, \
-            "no channel answered for this target", "keep_pending"
-    elif authoritative_negative and pos > 0:
-        v, conf, reason, action = "contradicted", 0.5, \
-            "fresh official list says absent while another channel says present", \
-            "human_check"
-    elif pos >= CONFIRM_THRESHOLD and len(independent_pos) >= 2:
-        v, conf, reason, action = "confirmed", min(0.99, 0.6 + 0.1 * pos), \
-            "two or more independent non-stale channels agree on presence", \
-            "terminal"
-    elif pos >= 1.0 and "official_list" in independent_pos:
-        v, conf, reason, action = "confirmed", 0.85, \
-            "fresh official list confirms the exact course identity", \
-            "terminal"
-    elif neg > 0 and all(e.stale for e in rows if e.present is False) and pos == 0:
-        v, conf, reason, action = "pending", 0.3, \
-            "only stale negative reads; a cached list cannot falsify a submit", \
-            "keep_pending"
-    elif pos > 0 and neg > 0:
-        v, conf, reason, action = "pending", 0.4, \
-            "channels disagree without a fresh authoritative negative", \
-            "keep_pending"
+    used = sorted(by_channel)
+    if conflicts:
+        v, conf, reason, action = ("contradicted", 0.2,
+            "conflicting observations from the same channel: " + ",".join(sorted(conflicts)),
+            "human_check")
+    elif official_positive and neg > 0 and any(
+            channel != "official_list" and not all(e.stale for e in reports)
+            and any(e.present is False for e in reports)
+            for channel, reports in by_channel.items()):
+        v, conf, reason, action = ("contradicted", 0.5,
+            "fresh official selection conflicts with another fresh class-level read",
+            "human_check")
+    elif official_positive:
+        v, conf, reason, action = ("confirmed", 0.85,
+            "fresh official selected-course list matches exact course and class",
+            "terminal")
+    elif official_negative and pos > 0:
+        v, conf, reason, action = ("contradicted", 0.5,
+            "fresh official list disagrees with class-level evidence",
+            "human_check")
+    elif not used:
+        v, conf, reason, action = ("unknown", 0.0,
+            "no exact teaching-class evidence", "keep_pending")
     elif pos > 0:
-        v, conf, reason, action = "pending", 0.5, \
-            "weak/partial positive evidence; keep the intent pending", \
-            "keep_pending"
+        v, conf, reason, action = ("pending", 0.5,
+            "corroborating reads cannot replace verified official selected-course proof",
+            "keep_pending")
     else:
-        v, conf, reason, action = "pending", 0.2, \
-            "all answers negative; never promote HTTP 200 to success", \
-            "keep_pending"
+        v, conf, reason, action = ("pending", 0.2,
+            "no positive official proof; absence never proves rejection",
+            "keep_pending")
 
-    return Verdict(cid, cls, v, round(conf, 3), round(pos, 3), round(neg, 3),
-                   sorted(set(used)), sorted(set(stale)), reason, action)
+    return Verdict(cid, cls, v, conf, round(pos, 3), round(neg, 3),
+                   used, sorted(stale), reason, action)
 
 
 def reconcile(pending_intents: Sequence[Dict[str, str]],
