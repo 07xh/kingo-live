@@ -225,7 +225,7 @@ python tests/e2e_kingo.py      # 7 项：双账号并发 → 满员重试 → �
 python tests/test_guard.py     # 16 项：占位符拦截 / 402 熔断
 python tests/test_auto.py      # 5 项：课程匹配 + 回写 + 不误配
 python tests/e2e.py            # 7 项：正方适配器没退化
-python tests/test_tls.py       # 8 项：TLS 校验 / 禁用远程明文 / 本机 mock
+python tests/test_tls.py       # 10 项：TLS 校验 / 禁用远程明文 / 本机 mock
 ```
 
 ## 已知坑
