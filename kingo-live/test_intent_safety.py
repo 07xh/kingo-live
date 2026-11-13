@@ -48,10 +48,40 @@ class IntentHTTPTests(selftest.LiveHTTPTests):
                     self.state.catalog_rows = [self.state.catalog_rows[1]]
                     self.state.catalog_rows[0]['kyl'] = '1'
                     out = eng.enroll(confirm=True)
-                    self.assertEqual(out[0].reason, 'already_confirmed')
+                    self.assertEqual(out[0].reason, 'already_enrolled_in_official_records')
                     self.assertEqual(self.state.submit_count, 1)
                 finally:
                     eng.close()
+
+    def test_stale_confirmed_journal_never_claims_success(self):
+        cfg = self.cfg()
+        engine = lc.Engine(cfg, self.rec("_stale"))
+        try:
+            target = lc.Offering("C001", "T01", "", "", 1)
+            engine.journal.write("confirmed", target, "old_approval")
+            result = engine.enroll(confirm=True)
+            self.assertEqual(result[0].reason,
+                             "historical_confirmation_not_in_official_records")
+            self.assertFalse(result[0].success)
+            self.assertEqual(self.state.submit_count, 0)
+        finally:
+            engine.close()
+
+    def test_stale_confirmed_journal_cannot_bypass_scope_gate(self):
+        cfg = self.cfg()
+        cfg["enrollment"]["official_verified"] = False
+        engine = lc.Engine(cfg, self.rec("_stale_scope"))
+        try:
+            engine.journal.write(
+                "confirmed", lc.Offering("C001", "T01", "", "", 1),
+                "old_approval")
+            result = engine.enroll(confirm=True)
+            self.assertEqual(result[0].reason,
+                             "official_readback_contract_not_verified")
+            self.assertFalse(result[0].success)
+            self.assertEqual(self.state.submit_count, 0)
+        finally:
+            engine.close()
 
     def test_missing_pending_course_cannot_trigger_fallback(self):
         cfg = self.cfg()
