@@ -33,6 +33,7 @@ from core.inspector import inspect_html
 from core.har_audit import summarize_har, format_summary
 from core.plan_csv import load_plan_csv
 from core.plan_json import load_plan_json
+from contracts.identity_audit import compare_offerings
 from tools.catalog_evidence import inspect_local_file
 from core.scheduler import Scheduler
 from core.preflight import inspect_readiness, split_checks, format_checks
@@ -256,6 +257,8 @@ class Application(tk.Tk):
         tools_menu.add_command(label="选课目录证据对照（离线 JSON）", command=self.review_catalog_evidence)
         tools_menu.add_command(label="查看开课计划 CSV（非实时）", command=self.view_plan_csv)
         tools_menu.add_command(label="查看规范化课程 JSON（非实时）", command=self.view_plan_json)
+        tools_menu.add_command(label="核对两份课程 JSON 的身份（非已选核验）",
+                               command=self.compare_local_course_snapshots)
         tools_menu.add_command(label="北化课表参数 · 离线调度测速", command=self.benchmark_offline)
         tools_menu.add_command(label="华水官方入口清单（离线）", command=self.show_official_entries)
         tools_menu.add_command(label="检测官方登录页可达性（手动）", command=self.probe_official_entries)
@@ -833,6 +836,82 @@ class Application(tk.Tk):
         note = f"文件自报来源：{source_names}｜本机观察：{observation}"
         self._render_local_snapshot(snapshot.rows, "JSON", note)
 
+    def compare_local_course_snapshots(self) -> None:
+        """Compare two public offline snapshots, never a live enrollment list."""
+        if self.worker or self.__dict__.get("scheduled_worker"):
+            messagebox.showinfo("请先停止监测", "监测期间不核对本机快照。")
+            return
+        files = []
+        for label in ("第一份基准课程 JSON", "第二份对照课程 JSON"):
+            chosen = filedialog.askopenfilename(
+                title=f"选择{label}（仅公开课程字段，不是 HAR/已选证明）",
+                filetypes=[("标准课程 JSON 文件", "*.json")],
+            )
+            if not chosen:
+                return
+            files.append(Path(chosen))
+        if files[0].resolve() == files[1].resolve():
+            messagebox.showwarning("无法核对", "请选两份不同的本机课程快照。")
+            return
+        try:
+            first = load_plan_json(files[0])
+            second = load_plan_json(files[1])
+            report = compare_offerings(first.offerings, second.offerings)
+        except (OSError, ValueError):
+            messagebox.showerror(
+                "核对失败", "文件超限、含额外字段或课程身份不可信；未联网、未修改任何状态。",
+            )
+            return
+        window = tk.Toplevel(self)
+        window.title("跨来源课程身份核对｜历史快照（非已选证明）")
+        window.geometry("1020x500")
+        ttk.Label(
+            window,
+            text="只对照课程号与教学班号；精确匹配也不代表官方已经选上。"
+                 "本功能不联网、不写入提交记录、不改变志愿。",
+            padding=10,
+        ).pack(fill="x")
+        outer = ttk.Frame(window, padding=(8, 4))
+        outer.pack(fill="both", expand=True)
+        columns = ("course", "class", "name", "verdict", "other_class", "notes")
+        view = ttk.Treeview(outer, columns=columns, show="headings")
+        for key, label, width in (
+            ("course", "课程号", 110),
+            ("class", "原教学班", 130),
+            ("name", "课程名称", 130),
+            ("verdict", "核对结果（仅历史快照）", 320),
+            ("other_class", "第二份记录的班号", 160),
+            ("notes", "差异备注", 150),
+        ):
+            view.heading(key, text=label)
+            view.column(key, width=width, stretch=True)
+        scrollbar = ttk.Scrollbar(outer, orient="vertical", command=view.yview)
+        view.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side="right", fill="y")
+        view.pack(fill="both", expand=True)
+        for item in report.rows:
+            view.insert("", "end", values=(
+                item.course_id, item.class_id or "缺失", item.course_name,
+                item.verdict_label,
+                "、".join(item.reference_classes) or "未知",
+                item.notes,
+            ))
+        source_a = "、".join(first.sources) or "无记录"
+        source_b = "、".join(second.sources) or "无记录"
+        ttk.Label(
+            window,
+            text=f"第一份 {report.left_count} 条（{source_a}）｜第二份 "
+                 f"{report.reference_count} 条（{source_b}）｜身份精确匹配 "
+                 f"{report.exact} 条｜待人工核对 {report.needs_review} 条"
+                 "｜文件自报来源不证明官方真实性",
+            padding=10,
+        ).pack(fill="x")
+        self.status.set("本机课程身份核对完成｜非已选结果")
+        self.log(
+            f"两份本机课程快照已核对：精确身份 {report.exact}，"
+            f"待人工核对 {report.needs_review}；不涉及官方选中证明。",
+        )
+
     def _render_local_snapshot(self, records, filetype: str, note: str) -> None:
         """Shared table presenter: never populates or modifies target-course plans."""
         window = tk.Toplevel(self)
@@ -1377,6 +1456,40 @@ def run_packaged_gui_smoke() -> None:
                         raise AssertionError("Canonical snapshot lost course identity or unknown seat")
                     if len(app.table.get_children()) != unchanged:
                         raise AssertionError("JSON snapshot modified the saved course plan")
+                    windows[-1].destroy()
+                # Compare two real canonical snapshot files in the frozen UI.
+                # Identical course/class IDs are still explicitly NOT an
+                # official-enrollment confirmation.
+                cross = Path(directory) / "course-cross-source.json"
+                cross.write_text(json.dumps([{
+                    "source": "ncwu.plan", "course_id": "000045",
+                    "class_id": "000045-101", "course_name": "体育",
+                    "teacher": "老师", "remaining": 1,
+                    "observed_at": "2026-11-13T13:00:00+08:00",
+                }], ensure_ascii=False), encoding="utf-8")
+                with patch.object(
+                        filedialog, "askopenfilename",
+                        side_effect=[str(normalized), str(cross)]):
+                    unchanged = len(app.table.get_children())
+                    app.compare_local_course_snapshots()
+                    app.update()
+                    windows = [w for w in app.winfo_children() if isinstance(w, tk.Toplevel)]
+                    if not windows or "非已选证明" not in windows[-1].title():
+                        raise AssertionError("Packaged identity audit viewer is missing")
+                    compare_tree = next(
+                        (child for panel in windows[-1].winfo_children()
+                         for child in panel.winfo_children()
+                         if isinstance(child, ttk.Treeview)), None
+                    )
+                    if compare_tree is None or len(compare_tree.get_children()) != 1:
+                        raise AssertionError("Identity audit result missing")
+                    item = compare_tree.get_children()[0]
+                    verdict = compare_tree.set(item, "verdict")
+                    if ("完全一致（仅快照）" not in verdict
+                            or "已选成功" in verdict):
+                        raise AssertionError("Identity audit falsely implies official selection")
+                    if len(app.table.get_children()) != unchanged:
+                        raise AssertionError("Identity audit modified saved targets")
                     windows[-1].destroy()
                 if len(app.table.get_children()) != 2:
                     raise AssertionError("Expected two placeholder courses in packaged template")

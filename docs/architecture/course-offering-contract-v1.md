@@ -65,3 +65,22 @@ standalone Windows source and frozen EXE, checks malformed/private JSON
 rejection, and exercises the real Qiangke DataTable -> canonical JSON ->
 Windows parser path. `observed_at` is only the client's observation time;
 no snapshot certifies live availability or official course enrollment.
+
+## Cross-source snapshot identity audit (offline, not enrollment readback)
+
+`contracts.identity_audit.compare_offerings` compares two independently
+loaded, fully validated public offering snapshots. It compares exact
+`course_id` and `class_id` strings, preserving leading zeroes. The possible
+results are: exact snapshot identity, same course with a different teaching
+class, missing class, reused class number with different course code, duplicate
+ambiguity, or absent from the second snapshot. A name/teacher discrepancy is
+reported separately without changing stable identity matching.
+
+Windows **离线工具 → 核对两份课程 JSON 的身份（非已选核验）** loads two
+local JSON files via the existing `core.plan_json` validator and displays
+that comparison in a separate Tk window, leaving saved targets untouched.
+The results cannot establish current availability, account scope, selection
+semester, or official enrollment. Neither file's declared `source` is
+authentication evidence. The existing verified-gateway readback in
+`core.enrollment_recovery` remains independent and is still NOT connected to
+an accepted NCWU official per-teaching-class API.
