@@ -38,7 +38,7 @@
 `jwmis.ncwu.edu.cn_2026_11_14_01_15_06.har` 含 **112 条请求**，只将脱敏后的结构结论写入本文件，不上传 HAR/Cookie。
 
 - `POST /hsjw/jw/common/getSelectLessonScoreKcsInfo.action`：返回 `status/message/result`，内部包含 `yxms/yxxf` 等已选门数和学分；不含“课程号＋教学班号”明细。
-- `POST /hsjw/jw/common/getWsxkTimeRange.action`：内部包含账号、学年、学期与时间窗字段；可辅助确认会话范围，但不是已选列表。
+- `POST /hsjw/jw/common/getWsxkTimeRange.action`：内部包含账号、学年、学期与时间窗字段；可辅助确认会话范围，但不是已选列表。两次实际响应业务状态均为 `400`，`isValidTimerange=0`，说明所采集选课类型的时间窗未开放。
 - `POST /hsjw/taglib/DataTable.jsp?tableId=2549`：本次表头包括课程代码、课程、教师及人数；`showTotalRecord('2549','0')`，没有记录或教学班号证据。
 - `POST /hsjw/taglib/DataTable.jsp?tableId=5036`：本次表头包含课程代码、状态和课程名称等；`showTotalRecord('5036','0')`，没有课程明细行或教学班号证据。
 - `POST /hsjw/student/wsxk.yxjg_report.jsp`：统计报表，不包含可核实的目标课程＋教学班记录。
@@ -46,7 +46,7 @@
 
 **安全边界：**有 107 条请求携带 Cookie 请求头，并捕获过 `/hsjw/cas/logon.action` 登录接口；这份 HAR 属于敏感会话数据，禁止公开上传、加入 PR、CI 或版本历史。
 
-**结论：**第二份 HAR 提供了真实菜单、门禁和汇总结构，但仍缺少经过业务语义确认的非空、完整、绑定账号和学期的官方已选课程列表。任何真实接口适配器必须继续保持未验证状态，不能硬编码一个“成功”判据。
+**结论：**第二份 HAR 提供了真实菜单、门禁和汇总结构，但采集时选课时间窗未开放；表格零记录不能解释为“学生未选课”，更不能证明具体教学班选中或失败。仍缺少经过业务语义确认的完整、绑定账号和学期的官方已选课程列表。任何真实接口适配器必须继续保持未验证状态，不能硬编码一个“成功”判据。
 
 ## kingo-live 闸门
 
