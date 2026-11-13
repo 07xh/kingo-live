@@ -262,7 +262,10 @@ class TargetRanker:
 # ---------------------------------------------------------------------------
 
 class IntentGate:
-    """idle -> issued -> pending -> confirmed | rejected. No second 'issued'."""
+    """Offline-only volatile fence. Non-matching readback stays pending.
+
+    Not the durable Windows AttemptJournal; never attach to real submit_once.
+    """
 
     def __init__(self):
         self.states: Dict[str, str] = {}
@@ -291,7 +294,9 @@ class IntentGate:
 
     def reconcile(self, target: dict, official_hit: bool) -> str:
         k = self.key(target)
-        state = "confirmed" if official_hit else "rejected"
+        # Absence from an official readback does not prove rejection.
+        # Keep the original fence, and require external authoritative recovery.
+        state = "confirmed" if official_hit else "pending"
         self.states[k] = state
         self.history.append({"key": k, "event": state, "at": time.time()})
         return state
