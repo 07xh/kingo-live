@@ -6,7 +6,7 @@
     "base_url": "https://jwmis.ncwu.edu.cn",
     "timeout": 8,
     "retries": 1,
-    "verify_tls": false,
+    "verify_tls": true,
     "login_retry": 2,
     "max_fail_tries": 3,
     "captcha": {
