@@ -52,11 +52,19 @@ class IntentJournal:
         if class_a and class_b and class_a != class_b:
             raise ValueError("教学班号字段冲突，禁止提交")
         class_id = class_a or class_b
-        if class_id.lower() in ("", "unknown", "none", "-"):
-            raise ValueError("缺少稳定教学班号")
-        # Course name, teacher and optionally changing course code are ignored:
-        # blocking an ambiguous duplicate is safer than risking a second POST.
-        identity = json.dumps([school_id, account_id, term_id, class_id],
+        raw_course = course.get("kch_id") or course.get("kcdm")
+        if raw_course is not None and (isinstance(raw_course, bool)
+                                       or not isinstance(raw_course, (str, int))):
+            raise ValueError("课程代码格式不可信")
+        course_code = str(raw_course or "").strip()
+        # Some legacy read-only NCWU adapters cannot determine a teaching
+        # class. Conservatively fence the *whole course* in that case.
+        # Qiangke's write engine additionally requires an explicit class ID.
+        target = ("class", class_id) if class_id else ("course", course_code)
+        if not target[1] or target[1].lower() in ("unknown", "none", "-"):
+            raise ValueError("缺少稳定的课程代码或教学班号")
+        # Do not include cosmetic display name / teacher in this identity.
+        identity = json.dumps([school_id, account_id, term_id, *target],
                               ensure_ascii=False, separators=(",", ":"))
         return hmac.new(self.salt, identity.encode("utf-8"), hashlib.sha256).hexdigest()
 

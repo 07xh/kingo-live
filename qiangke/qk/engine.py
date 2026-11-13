@@ -152,6 +152,10 @@ class Engine:
                    or os.path.join(os.path.expanduser("~"),
                                    ".kingo-assistant", "intent-journal.sqlite3"))
         try:
+            if not isinstance(course, dict) or not (
+                    str(course.get("xkid") or "").strip()
+                    or str(course.get("jxb_ids") or "").strip()):
+                raise ValueError("qiangke 需要明确教学班号，不能只凭课程名称提交")
             journal = IntentJournal(db_path)
             reserved = journal.reserve(
                 school=str(self.opts.get("base_url") or "unknown"),

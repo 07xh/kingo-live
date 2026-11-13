@@ -60,6 +60,11 @@ class JournalTests(unittest.TestCase):
             self.assertFalse(store.reserve(**args, course=renamed))
             self.assertFalse(store.reserve(**args, course={"jxb_ids": "CLASS-01"}))
             self.assertTrue(store.reserve(**{**args, "term": "OTHER-TERM"}, course=TARGET))
+            # Legacy NCWU can fence an ambiguous course without a class:
+            # it must not generate extra writes after display text changes.
+            only_code = {"kch_id": "COURSE-001", "name": "Before"}
+            self.assertTrue(store.reserve(**args, course=only_code))
+            self.assertFalse(store.reserve(**args, course={**only_code, "name": "After"}))
 
     def test_missing_term_or_class_never_reserves(self):
         with tempfile.TemporaryDirectory() as tmp:
