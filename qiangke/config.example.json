@@ -1,0 +1,61 @@
+{
+  "school": "华北水利水电大学",
+  "log_dir": "logs",
+  "system": {
+    "type": "kingo",
+    "base_url": "https://jwmis.ncwu.edu.cn",
+    "timeout": 8,
+    "retries": 1,
+    "verify_tls": true,
+    "login_retry": 2,
+    "max_fail_tries": 3,
+    "captcha": {
+      "mode": "manual",
+      "enabled": "auto"
+    },
+    "paths": {
+      "entry": "/hsjw/",
+      "logon": "/hsjw/cas/logon.action",
+      "deskey": "/hsjw/frame/homepage?method=getTempDeskey",
+      "nowtime": "/hsjw/frame/homepage?method=getTempNowtime",
+      "captcha": "/hsjw/cas/genValidateCode",
+      "home": "/hsjw/frame/homes.action"
+    },
+    "grab_request": {},
+    "words": {},
+    "auth": {
+      "mode": "local",
+      "pwd_mode": "md5"
+    }
+  },
+  "policy": {
+    "start_at": "",
+    "interval_ms": 300,
+    "poll_ms": 1200,
+    "jitter": 0.3,
+    "backoff_cap_ms": 3000,
+    "max_seconds": 1800,
+    "lead_ms": 120
+  },
+  "accounts": [
+    {
+      "name": "本人",
+      "user": "2026xxxxxx",
+      "pass": "",
+      "courses": [
+        {
+          "name": "课程名A",
+          "teacher": "张老师",
+          "xkid": "",
+          "jxb_ids": "",
+          "kch_id": ""
+        }
+      ]
+    }
+  ],
+  "notify": {
+    "webhook": "",
+    "kind": "raw"
+  },
+  "auth_old": {}
+}

@@ -8,6 +8,7 @@ Technical research repository: a real HTTP client for the Kingo/NCWU course-enro
 
 | Path | What it is |
 |---|---|
+| `qiangke/` | 独立 Python 实现（零依赖）：青果本地登录 + 8 个选课流程时间窗 + DataTable 选课链路，与 `ncwu/`、`kingo-live/` 并存不互相依赖。见 `qiangke/README.md` |
 | `kingo-live/README.md` | Full engineering doc: parameter ranges, placeholder discovery, verification criteria, CLI reference |
 | `kingo-live/live_client.py` | Real `http.client` transport, request budget, submission, official enrollment-list readback, CLI |
 | `kingo-live/optimizations.py` | Clock sync, session prewarm, release-event monitor, failure classifier, failover planner |

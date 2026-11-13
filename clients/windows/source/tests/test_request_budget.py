@@ -1,6 +1,8 @@
 """Offline, network-free policy and shared-budget regression tests."""
 import asyncio
+from contextlib import closing
 from pathlib import Path
+import sqlite3
 import tempfile
 import time
 import unittest
@@ -47,12 +49,21 @@ class RequestBudgetTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_retry_after_persists_on_restart(self):
         first = self.budget(((0.01, 10),))
-        await first.impose_retry_after(0.09)
+        await first.impose_retry_after(0.5)
         restarted = self.budget(((0.01, 10),))
+        # Windows runner startup/SQLite costs can consume much of a 90ms
+        # cooldown. Assert against the persisted deadline, not a hardcoded
+        # duration measured only *after* constructing the restarted client.
+        with closing(sqlite3.connect(self.db)) as conn:
+            deadline = conn.execute(
+                "SELECT value FROM metadata WHERE key='backoff_until'"
+            ).fetchone()[0]
+        remaining = deadline - time.time()
+        self.assertGreater(remaining, 0.05)
         start = time.monotonic()
         async with restarted.request():
             pass
-        self.assertGreaterEqual(time.monotonic() - start, 0.075)
+        self.assertGreaterEqual(time.monotonic() - start, remaining - 0.03)
 
     async def test_concurrent_request_slot_is_serial(self):
         budget = self.budget(((0.01, 10),))
