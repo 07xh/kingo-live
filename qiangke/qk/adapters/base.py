@@ -6,6 +6,8 @@ import threading
 from dataclasses import dataclass, field
 from typing import Optional
 
+from ..net import Session
+
 # 结果码
 OK = "success"        # 本次提交成功
 ENROLLED = "enrolled"  # 之前已选上
@@ -41,6 +43,17 @@ class Adapter:
         self.session = None
         self.lock = threading.RLock()
         self.logged_in = False
+
+    def make_session(self, base_url: str) -> Session:
+        """统一两个教务适配器的连接策略；远程站点默认校验证书。"""
+        return Session(
+            base_url=base_url,
+            timeout=float(self.opts.get("timeout", 8)),
+            retries=int(self.opts.get("retries", 1)),
+            headers=self.opts.get("headers") or {},
+            verify_tls=self.opts.get("verify_tls", True),
+            logger=self.log,
+        )
 
     # --- 生命周期 ---
     def open(self) -> None:
