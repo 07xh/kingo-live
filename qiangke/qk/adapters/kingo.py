@@ -24,7 +24,7 @@ from urllib.parse import quote
 
 from ..kingo_des import str_enc
 from ..net import NetError
-from .base import AUTH, CONFLICT, ENROLLED, ERR, FULL, OK, Adapter, GrabResult
+from .base import AUTH, CONFLICT, ENROLLED, ERR, FULL, OK, UNKNOWN, Adapter, GrabResult
 
 DEFAULTS = {
     "entry": "/hsjw/",
@@ -519,13 +519,14 @@ class KingoAdapter(Adapter):
             tail = f" 余量 {left}" if left is not None else ""
             self.log.ok(f"  命中：{c.get('name')} -> xkid={hit['xkid']}{tail}")
 
-    def _send(self, url: str, form: dict, json_body, headers: dict, method: str = "POST"):
+    def _send(self, url: str, form: dict, json_body, headers: dict, method: str = "POST",
+              retry_safe: bool = True):
         if json_body is not None:
-            return self.session.post(url, json_body=json_body, headers=headers)
+            return self.session.post(url, json_body=json_body, headers=headers, retry_safe=retry_safe)
         if (method or "").upper() == "GET":
             params = form or None
-            return self.session.get(url, params=params, headers=headers)
-        return self.session.post(url, data=form or {}, headers=headers)
+            return self.session.get(url, params=params, headers=headers, retry_safe=retry_safe)
+        return self.session.post(url, data=form or {}, headers=headers, retry_safe=retry_safe)
 
     def fetch_course_list(self) -> list[dict]:
         """拉课程列表，统一成 engine/parse 认的格式。
@@ -613,17 +614,19 @@ class KingoAdapter(Adapter):
             hd.setdefault("Referer", self.base_url + "/hsjw/")
             try:
                 r = self._send(url, form, json_body, hd,
-                               (self.grab_request or DEFAULT_GRAB).get("method", "POST"))
+                               (self.grab_request or DEFAULT_GRAB).get("method", "POST"), retry_safe=False)
             except NetError as e:
-                return GrabResult(False, ERR, f"网络异常: {e}", course, 0, time.time() - t0)
+                return GrabResult(False, UNKNOWN, "提交响应丢失，请在官方已选列表核验", course, 0, time.time() - t0)
 
             raw = r.text or ""
             code = self._classify(raw, r.url)
+            # The endpoint may acknowledge even a nonexistent course. Neither
+            # generic success text nor an unrecognized response proves enrollment.
+            if code in (OK, ERR) or not 200 <= r.status < 300:
+                code = UNKNOWN if code != AUTH else AUTH
             res = GrabResult(code in (OK, ENROLLED), code, raw.strip()[:200] or f"HTTP {r.status}",
                              course, 0, time.time() - t0, raw[:600])
-            if code == OK:
-                self.log.ok(f"抢到！{course.get('name','')} {raw.strip()[:60]}")
-            elif code == AUTH:
+            if code == AUTH:
                 self.logged_in = False
             return res
 
@@ -673,3 +676,4 @@ class KingoAdapter(Adapter):
         if "login.action" in (url or "") or any(w in raw for w in has("auth", AUTH_WORDS)):
             return AUTH
         return ERR
+

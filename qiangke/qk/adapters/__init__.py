@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-from .base import (AUTH, CONFLICT, ENROLLED, ERR, FULL, OK, Adapter, GrabResult)
+from .base import (AUTH, CONFLICT, ENROLLED, ERR, FULL, OK, UNKNOWN, Adapter, GrabResult)
 from .kingo import KingoAdapter, build_logon_body
 from .zfsoft import ZfsoftAdapter
 
@@ -14,4 +14,5 @@ def make(kind: str, acct: dict, opts: dict, log, solver=None) -> Adapter:
 
 
 __all__ = ["Adapter", "GrabResult", "KingoAdapter", "ZfsoftAdapter", "build_logon_body",
-           "make", "ADAPTERS", "OK", "ENROLLED", "FULL", "CONFLICT", "AUTH", "ERR"]
+           "make", "ADAPTERS", "OK", "ENROLLED", "FULL", "CONFLICT", "AUTH", "ERR", "UNKNOWN"]
+

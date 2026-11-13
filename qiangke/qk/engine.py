@@ -13,7 +13,7 @@ import threading
 import time
 from datetime import datetime
 
-from .adapters import AUTH, CONFLICT, ENROLLED, ERR, FULL, OK, make
+from .adapters import AUTH, CONFLICT, ENROLLED, ERR, FULL, OK, UNKNOWN, make
 from .captcha import CaptchaSolver
 from .notify import Notifier
 
@@ -150,6 +150,9 @@ class Engine:
             if r.code in (OK, ENROLLED):
                 self.notifier.hit(ad.acct, course, r)
                 return
+            if r.code == UNKNOWN:
+                self.log.warning(f"{label} 结果待核验，停止自动重发；请查官方已选列表")
+                return
             if r.code == CONFLICT:
                 self.log.warning(f"{label} 冲突/超限，停止重试：{r.msg}")
                 self.notifier.fail(ad.acct, course, r)
@@ -183,3 +186,4 @@ class Engine:
             json.dump({"ok": ok, "all": self.results}, f, ensure_ascii=False, indent=2)
         self.log.info(f"结果写入 {path}")
         return self.results
+

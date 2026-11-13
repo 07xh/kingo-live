@@ -14,6 +14,7 @@ ENROLLED = "enrolled"  # 之前已选上
 FULL = "full"         # 容量满 / 无余量
 CONFLICT = "conflict" # 时间冲突 / 学分超限
 AUTH = "auth"         # 登录态失效，需要重登
+UNKNOWN = "unknown"  # 提交结果不确定；核验前禁止自动重发
 ERR = "error"         # 其他失败（网络、参数）
 
 
@@ -76,3 +77,4 @@ class Adapter:
             except Exception as e:
                 self.log.warning(f"重登失败: {e}")
                 return False
+
