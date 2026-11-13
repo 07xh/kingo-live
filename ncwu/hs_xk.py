@@ -282,7 +282,7 @@ def judge(raw):
     closed = ["不是有效的选课时间", "时间区段", "未到", "已结束"]
     for kw in ok:
         if kw in plain:
-            print(c("32", f"→ 判定：成功（命中「{kw}」）"))
+            print(c("33", "→ 仅收到成功文案；尚未按官方已选课程逐项核验，不能确认选中"))
             return
     for kw in full:
         if kw in plain:
@@ -332,8 +332,6 @@ def main():
     ap.add_argument("--js", default="null", help="submit: 该项的任课教师值，默认 null")
     ap.add_argument("--tj", default="0", help="submit: 允许调剂 0/1")
     ap.add_argument("--dry-run", action="store_true")
-    ap.add_argument("--repeat", type=int, default=1, help="submit: 重复次数（默认 1）")
-    ap.add_argument("--gap", type=float, default=0.6, help="submit: 每次间隔秒")
     args = ap.parse_args()
 
     ck = get_cookie(args)
@@ -360,22 +358,19 @@ def main():
         g, form = pre_form(ck, args.xktype, args.kcfw, args.nj, args.zydm, args.yxb,
                            args.xn, args.xq)
         st = str(g.get("status"))
-        if st != "200":
-            print(c("31", f"门禁未开：status={st} {g.get('message')}"))
-            print(c("33", "继续仍可试（脚本按原样提交），服务器会给出同样的拒绝原因。"))
+        window = (g.get("result") or {})
+        if st != "200" or str(window.get("isValidTimerange")) != "1":
+            if not args.dry_run:
+                sys.exit("官方选课窗口未明确开放；本次未发送选课提交。")
+            print(c("33", "选课窗口未开放；仅执行本地 dry-run，不发送提交。"))
         # items 格式：kcdm,js,tj,checked|
         items = f"{args.kcdm},{args.js},{args.tj},true|"
         print(c("36", f"[提交] kcdm={args.kcdm} skbjdm={args.skbjdm or '-'} items={items}"))
-        for i in range(args.repeat):
-            raw = submit(ck, form, items, dry_run=args.dry_run)
-            judge(raw)
-            if args.dry_run or i + 1 >= args.repeat:
-                break
-            if raw is not None:
-                t = raw.decode("gb18030", "replace")
-                if "成功" in _txt(t):
-                    break
-            time.sleep(args.gap)
+        # Exactly one physical write per explicit CLI invocation.
+        # A lost response must be checked on the official enrollment page,
+        # never replayed automatically because the first request may have landed.
+        raw = submit(ck, form, items, dry_run=args.dry_run)
+        judge(raw)
         return
 
 
