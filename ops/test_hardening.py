@@ -180,6 +180,12 @@ class HardeningTests(unittest.TestCase):
         classified = endpoints.classify([result])
         self.assertNotIn("SECRET_STUDENT", json.dumps(classified))
 
+    def test_demo_distinguishes_real_confirmation_from_clues(self):
+        report = crosscheck.demo()
+        statuses = [v["verdict"] for v in report["verdicts"]]
+        self.assertEqual(statuses, ["confirmed", "contradicted", "pending"])
+        self.assertTrue(report["plan"]["confirm_threshold_is_advisory_only"])
+
 
 if __name__ == "__main__":
     unittest.main()

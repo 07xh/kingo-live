@@ -175,7 +175,7 @@ python fingerprint_bridge.py --cdp http://127.0.0.1:9222 \
 | `lead_ms` | 30（10–80） | 覆盖一次目录读 + 已预构造 body 的发送，不覆盖握手 |
 | 连接分片 | 每会话 1 条 + 1 备用 | 备用节点不复用 TLS session；`concurrency` 仍锁 1 |
 | 通道权重 | 1.0 / 0.8 / 0.6 / 0.5 | 已选名单 / wap 课表 / 学分 / `zxxq`；滞后读再乘 0.30 |
-| 确认阈值 | `positive≥1.20` 且 ≥2 个非滞后通道 | 单通道滞后否定**不能**把真成功变 `pending` |
+| 最终确认判据 | 新鲜官方已选名单 + 精确课程与教学班号 + 账号与学期绑定 | 多来源权重仅用于判断辅助线索和证据冲突，不能代替官方成功证明 |
 | Frida 改写字段 | 仅 `kcid`、`skbj` | `xqerSign` 覆盖 `param/param2/token`，出口改写必废签名 |
 
 ### 关键判据表
@@ -184,7 +184,7 @@ python fingerprint_bridge.py --cdp http://127.0.0.1:9222 \
 |---|---|---|
 | 变体出现不同 `X-RateLimit-*` / `Server-Timing` / `prohibit` | 存在独立入口 | 只选 1 条通道深入测，不并发扇出 |
 | 同一会话换学期参数 → 窗口标记变化 | 窗口判定吃客户端输入 | 验证服务端是否二次硬校验，不得直接构造越窗请求 |
-| 名单滞后 `present=false` + 课表/学分 `present=true` | 真成功被缓存误读 | `verdict=confirmed`，意图终止，绝不重提 |
+| 名单滞后 `present=false` + 课表/学分 `present=true` | 无法排除官方缓存与部分数据延迟 | `verdict=pending`，等待精确官方名单回查 |
 | 名单新鲜否定 + 其他通道肯定 | 证据冲突 | `human_check`，停机不猜 |
 | 签名 POST 的构造点出现 `kcid/skbj put()` | 可让 App 自己签发 | hook 构造点，签名出口一字不改 |
 | 签名含时间戳 + 设备指纹且服务端校验 | #5 失效 | 转 #4/#12，不再投入 |

@@ -37,7 +37,7 @@ CHANNEL_WEIGHTS: Dict[str, float] = {
     "zxxq": 0.5,                 # structured selection payload
 }
 STALE_PENALTY = 0.30             # a stale read keeps 30% of its weight
-CONFIRM_THRESHOLD = 1.20         # >= 2 independent channels, or 1 strong + 1 weak
+CONFIRM_THRESHOLD = 1.20         # legacy reporting only; never authorizes confirmation
 
 
 @dataclass
@@ -190,23 +190,35 @@ def channel_plan() -> dict:
     return {"channels": {k: {"weight": w} for k, w in CHANNEL_WEIGHTS.items()},
             "stale_penalty": STALE_PENALTY,
             "confirm_threshold": CONFIRM_THRESHOLD,
+            "confirm_threshold_is_advisory_only": True,
+            "confirmation_requires": ["official_list", "exact_class_id",
+                                      "account_scope", "semester", "fresh"],
             "all_read_only": True,
-            "note": "parallel GETs only; a lagging list is down-weighted, "
-                    "never treated as proof of failure"}
+            "note": "only exact fresh official selected-list with account/semester "
+                    "confirms; other channels are supporting clues"}
 
 
 def demo() -> dict:
-    t1 = {"course_id": "C1", "class_id": "01"}
-    t2 = {"course_id": "C2", "class_id": "02"}
-    t3 = {"course_id": "C3", "class_id": "03"}
+    scope = {"semester": "2026-T1", "account_scope": "DEMO"}
+    t1 = {"course_id": "C1", "class_id": "01", **scope}
+    t2 = {"course_id": "C2", "class_id": "02", **scope}
+    t3 = {"course_id": "C3", "class_id": "03", **scope}
     base = time.time()
     ev = [
-        Evidence("official_list", "C1", "01", False, 40.0, True, "cached", base),
-        Evidence("wap_schedule", "C1", "01", True, 55.0, False, "wap", base),
-        Evidence("credit_summary", "C1", "01", True, 61.0, False, "credit", base),
-        Evidence("official_list", "C2", "02", False, 38.0, False, "fresh", base),
-        Evidence("wap_schedule", "C2", "02", True, 52.0, False, "wap", base),
-        Evidence("official_list", "C3", "03", False, 41.0, True, "cached", base),
+        Evidence("official_list", "C1", "01", False, 40.0, True,
+                 "cached", base, **scope),
+        Evidence("wap_schedule", "C1", "01", True, 55.0, False,
+                 "wap", base, **scope),
+        Evidence("credit_summary", "C1", "01", True, 61.0, False,
+                 "credit", base, **scope),
+        Evidence("official_list", "C1", "01", True, 25.0, False,
+                 "fresh_official", base + 1, **scope),
+        Evidence("official_list", "C2", "02", False, 38.0, False,
+                 "fresh", base, **scope),
+        Evidence("wap_schedule", "C2", "02", True, 52.0, False,
+                 "wap", base, **scope),
+        Evidence("official_list", "C3", "03", False, 41.0, True,
+                 "cached", base, **scope),
     ]
     verdicts = [fuse(t, ev).public() for t in (t1, t2, t3)]
     decisions = [d.as_dict() for d in reconcile([t1, t2, t3], ev)]
