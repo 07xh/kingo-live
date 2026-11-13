@@ -95,6 +95,10 @@ class WindowsSharedFenceTests(unittest.TestCase):
 
     def test_local_file_write_failure_never_releases_shared_intent(self):
         journal = self.journal()
+        # Create the initial salted metadata before simulating a failure in
+        # the *second* write. Otherwise we only test initialization failure,
+        # which occurs before any shared reservation is attempted.
+        journal._read()
         with patch.object(journal, "_write", side_effect=OSError("synthetic failure")):
             with self.assertRaises(OSError):
                 journal.reserve_before_write(self.target)
