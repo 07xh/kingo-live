@@ -217,7 +217,7 @@ class LiveHTTPTests(unittest.TestCase):
         self.assertEqual(self.state.last_get_headers.get("X-Requested-With"),
                          "XMLHttpRequest")
 
-    def test_429_cooldown_and_ignore_retry_after(self):
+    def test_429_cooldown_cannot_be_bypassed(self):
         self.state.force_429 = True
         eng = lc.Engine(self.cfg(), records_path=self.rec("_a"))
         out = eng.enroll(confirm=True)
@@ -225,12 +225,12 @@ class LiveHTTPTests(unittest.TestCase):
         self.assertFalse(out[0].success)
 
         before = self.state.submit_count
-        cfg2 = self.cfg(respect_retry_after=False)
+        cfg2 = self.cfg(respect_retry_after=True)
         cfg2["budget"]["database"] = str(Path(eng.budget.db_path))
         cfg2["journal"]["path"] = str(self.dir / f"journal_{self.tag()}_2.jsonl")
         eng2 = lc.Engine(cfg2, records_path=self.rec("_b"))
         eng2.enroll(confirm=True)
-        self.assertGreater(self.state.submit_count, before)
+        self.assertEqual(self.state.submit_count, before)
         self.state.force_429 = False
 
     def test_measure_over_real_recorded_attempts(self):

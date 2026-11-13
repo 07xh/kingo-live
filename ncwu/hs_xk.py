@@ -54,6 +54,12 @@ import sys
 import time
 import urllib.parse
 import urllib.request
+import sqlite3
+from pathlib import Path
+
+# Share the same durable per-intent guard with the Qiangke CLI.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from qiangke.qk.intent_journal import IntentJournal
 
 BASE = "https://jwmis.ncwu.edu.cn/hsjw/"
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -275,14 +281,14 @@ def judge(raw):
         return
     txt = raw.decode("gb18030", "replace")
     plain = _txt(txt)
-    print(c("90", f"响应 {len(raw)}B：{plain[:300]}"))
+    print(c("90", f"已接收接口响应 {len(raw)}B；响应正文已隐藏，结果待官方逐课程核验"))
     ok = ["选课成功", "成功", "保存成功"]
     full = ["人数已满", "容量已满", "已满", "超过限选"]
     dup = ["已经选", "已选过", "重复", "不能重复"]
     closed = ["不是有效的选课时间", "时间区段", "未到", "已结束"]
     for kw in ok:
         if kw in plain:
-            print(c("32", f"→ 判定：成功（命中「{kw}」）"))
+            print(c("33", "→ 仅收到成功文案；尚未按官方已选课程逐项核验，不能确认选中"))
             return
     for kw in full:
         if kw in plain:
@@ -290,13 +296,13 @@ def judge(raw):
             return
     for kw in dup:
         if kw in plain:
-            print(c("33", f"→ 判定：已选过（命中「{kw}」）"))
+            print(c("33", "→ 接口提示可能已选过；须以官方已选课程明细为准"))
             return
     for kw in closed:
         if kw in plain:
             print(c("31", f"→ 判定：门外（命中「{kw}」）"))
             return
-    print(c("33", "→ 判定：未知，人工看响应原文"))
+    print(c("33", "→ 结果未知，请在官方已选课程列表核对；不回显服务器响应正文"))
 
 
 # ─────────────────────────── CLI ───────────────────────────
@@ -332,8 +338,6 @@ def main():
     ap.add_argument("--js", default="null", help="submit: 该项的任课教师值，默认 null")
     ap.add_argument("--tj", default="0", help="submit: 允许调剂 0/1")
     ap.add_argument("--dry-run", action="store_true")
-    ap.add_argument("--repeat", type=int, default=1, help="submit: 重复次数（默认 1）")
-    ap.add_argument("--gap", type=float, default=0.6, help="submit: 每次间隔秒")
     args = ap.parse_args()
 
     ck = get_cookie(args)
@@ -360,22 +364,36 @@ def main():
         g, form = pre_form(ck, args.xktype, args.kcfw, args.nj, args.zydm, args.yxb,
                            args.xn, args.xq)
         st = str(g.get("status"))
-        if st != "200":
-            print(c("31", f"门禁未开：status={st} {g.get('message')}"))
-            print(c("33", "继续仍可试（脚本按原样提交），服务器会给出同样的拒绝原因。"))
+        window = (g.get("result") or {})
+        if st != "200" or str(window.get("isValidTimerange")) != "1":
+            if not args.dry_run:
+                sys.exit("官方选课窗口未明确开放；本次未发送选课提交。")
+            print(c("33", "选课窗口未开放；仅执行本地 dry-run，不发送提交。"))
         # items 格式：kcdm,js,tj,checked|
         items = f"{args.kcdm},{args.js},{args.tj},true|"
         print(c("36", f"[提交] kcdm={args.kcdm} skbjdm={args.skbjdm or '-'} items={items}"))
-        for i in range(args.repeat):
-            raw = submit(ck, form, items, dry_run=args.dry_run)
-            judge(raw)
-            if args.dry_run or i + 1 >= args.repeat:
-                break
-            if raw is not None:
-                t = raw.decode("gb18030", "replace")
-                if "成功" in _txt(t):
-                    break
-            time.sleep(args.gap)
+        # Reserve in the same crash-safe journal used by the Qiangke CLI.
+        # Dry runs cannot claim an intent because no school write is sent.
+        if not args.dry_run:
+            if not all(str(form.get(key) or "").strip() for key in ("xh", "xn", "xq")):
+                sys.exit("缺少官方账号或学期字段，禁止发送选课提交。")
+            journal_path = (os.environ.get("KINGO_INTENT_DB")
+                            or Path.home() / ".kingo-assistant" / "intent-journal.sqlite3")
+            try:
+                journal = IntentJournal(journal_path)
+                reserved = journal.reserve(
+                    school="https://jwmis.ncwu.edu.cn",
+                    account=str(form["xh"]), term=f"{form['xn']}-{form['xq']}",
+                    course={"kch_id": str(args.kcdm), "xkid": str(args.skbjdm)},
+                )
+            except (OSError, ValueError, sqlite3.Error) as exc:
+                sys.exit(f"持久化提交保护失败，未发送请求：{type(exc).__name__}")
+            if not reserved:
+                sys.exit("相同账户、学期和目标存在历史提交意图，已停止重发；请核对官方已选记录。")
+        # The intent is persisted BEFORE the only physical write; lost responses
+        # remain unknown and are never automatically replayed.
+        raw = submit(ck, form, items, dry_run=args.dry_run)
+        judge(raw)
         return
 
 

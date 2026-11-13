@@ -250,12 +250,12 @@ RFC 7231 的 `Date` 头**只有 1 秒分辨率**，`ClockSync.precision_ms` 如�
 | 开关 | 代码里真正改了什么 |
 |---|---|
 | `poll_interval_ms` | `Engine.monitor()` / `watch_events()` 的真实 sleep 间隔 |
-| `concurrency` | `ThreadPoolExecutor` 的真实并发 POST |
-| `burst` / `race_repeat` | 真实请求份数 `concurrency × race_repeat × burst` |
+| `concurrency` | 兼容读取旧配置，但最新同一目标仅允许一次物理提交 |
+| `burst` / `race_repeat` | 旧配置兼容字段，不再复制提交 POST |
 | `direct_api` | 目录读改走 JSON 通道，真实加 `Accept: application/json` + `X-Requested-With` |
 | `sessions` | 建 N 个独立 Transport，各带自己的 Cookie |
 | `proxies` | `HTTPSConnection.set_tunnel()` 真实 CONNECT / HTTP 绝对 URI |
-| `respect_retry_after` | 为 false 时跳过冷却，**真的把请求发出去** |
+| `respect_retry_after` | 强制开启；传入 false 会被拒绝，不能跳过学校 Retry-After 冷却 |
 | `prebuild` | 在计时窗口外预序列化 body，`client_ms` 里不再计入 |
 | `warmup.keep_alive` | `Transport._open()` 缓存真实 `HTTPConnection`，`RawResponse.reused` 标记复用 |
 | `verify_tls` | `ssl` context 的校验开关 |

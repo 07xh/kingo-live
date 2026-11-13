@@ -39,6 +39,7 @@ jobs:
         run: |
           python tests/test_net_safety.py
           python tests/test_submission_safety.py
+          python tests/test_intent_journal.py
           python tests/test_tls.py
           python tests/test_pwd.py
           python tests/test_xk.py
@@ -51,7 +52,7 @@ jobs:
         shell: bash
         working-directory: kingo-live
         run: |
-          python -m unittest test_intent_safety -q
+          python -m unittest test_intent_safety test_request_policy -q
           python selftest.py
           python test_optimizations.py
           python cli_smoke.py

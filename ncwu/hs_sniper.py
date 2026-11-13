@@ -68,6 +68,11 @@ import threading
 import time
 import urllib.parse
 import urllib.request
+import sqlite3
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from qiangke.qk.intent_journal import IntentJournal
 
 BASE = "https://jwmis.ncwu.edu.cn/hsjw"
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -544,21 +549,22 @@ class Sniper:
 
     # ── 开火 ──
     def fire_one(self, kcdm, skbjdm_hint="", tj="0", jw=None):
-        """发一次提交。返回 (ok, msg, 耗时ms)"""
+        """发一次提交；返回的是传输回执，不是选课成功证明。"""
         items = f"{kcdm},null,{tj},true|"
         t0 = time.perf_counter()
         k = Kingo(jw) if jw is not None else self.k
         try:
             st, txt, ms = k.submit(self.form, items)
-        except Exception as e:
-            return False, f"异常 {e}", (time.perf_counter() - t0) * 1000
+        except Exception as exc:
+            return False, f"请求异常：{type(exc).__name__}，结果待核验", (time.perf_counter() - t0) * 1000
+        # Never print arbitrary response text, including in debug mode:
+        # acknowledgements can contain session information or private data.
         if os.environ.get("HS_DEBUG"):
-            print(f"    [dbg] status={st} len={len(txt)} txt={txt[:120]!r}", flush=True)
-        m = re.search(r'"message"\s*:\s*"([^"]*)"', txt)
-        msg = m.group(1) if m else _txt(txt)[:80]
-        # 注意：这里返回的 ok 只代表 HTTP 层通，不代表选上了。
-        # fire() 仅记录已选门数变化，最终必须逐项核对官方已选课程。
-        return ("200" in txt or "成功" in msg), msg, ms
+            print(f"    [dbg] HTTP status={st} bytes={len(txt)} (body redacted)", flush=True)
+        # An HTTP acknowledgement is transport evidence only. The server
+        # may acknowledge even nonexistent course codes.
+        ack = str(st) in ("200", "201", "302")
+        return ack, "仅收到提交回执；官方已选课程待核验", ms
 
     def warmup(self, n):
         """
@@ -580,6 +586,32 @@ class Sniper:
         return len(self.pool)
 
     def fire(self, kcdm, skbjdm="", conc=None, tj=None):
+        # This standalone engine cannot infer success from HTTP 200 or a count.
+        # A current, official open-window indication and durable intent are
+        # required before the sole physical submission.
+        gate = self.gate_info or {}
+        if (str(gate.get("status")) != "200"
+                or str((gate.get("result") or {}).get("isValidTimerange")) != "1"):
+            log("保护", "官方选课时间窗未确认开放，未发送提交", "31")
+            return None
+        if not all(str(x or "").strip() for x in (
+                getattr(self, "xh", ""), getattr(self, "xn", ""), getattr(self, "xq", ""))):
+            log("保护", "缺少经接口确认的账号或学期，未发送提交", "31")
+            return None
+        path = (os.environ.get("KINGO_INTENT_DB")
+                or Path.home() / ".kingo-assistant" / "intent-journal.sqlite3")
+        try:
+            reserved = IntentJournal(path).reserve(
+                school="https://jwmis.ncwu.edu.cn",
+                account=str(self.xh), term=f"{self.xn}-{self.xq}",
+                course={"kch_id": str(kcdm), "xkid": str(skbjdm)},
+            )
+        except (OSError, ValueError, sqlite3.Error) as exc:
+            log("保护", f"提交记录无法持久化：{type(exc).__name__}，未发送请求", "31")
+            return None
+        if not reserved:
+            log("保护", "该课程存在待核验的历史提交，禁止跨重启重发", "31")
+            return None
         conc = 1  # A target gets one physical write; parallel duplicates are unsafe.
         # tj（允许调剂）建议开 1：items 里只有 kcdm 没有 skbjdm，
         # 说明班次是服务端按「限选人数 + 调剂」自己分配的。开 1 等于
@@ -606,8 +638,8 @@ class Sniper:
             ok, msg, ms = self.fire_one(kcdm, skbjdm, tj, jw)
             with rl:
                 results.append((i, ok, msg, ms))
-                log("开火", f"  #{i} {'OK ' if ok else 'ERR'} {ms:6.1f}ms  {msg[:60]}",
-                    "32" if ok else "33")
+                log("回执", f"  #{i} {'HTTP应答' if ok else '响应未知'} {ms:6.1f}ms；官方选课结果待核验",
+                    "33")
 
         ths = [threading.Thread(target=worker, args=(i + 1,), daemon=True) for i in range(conc)]
         for t in ths:
@@ -615,7 +647,7 @@ class Sniper:
         for t in ths:
             t.join(timeout=20)
 
-        # 结果验证：只认已选门数
+        # 只读观察：已选门数变化不是目标课程的成功证明
         # 实测：提交一个不存在的课程号，服务端照样返回 status 200「操作成功」。
         # 响应 200 ≠ 选上了，所以必须回查一次。
         time.sleep(float(self.cfg.get("verify_delay", 0.4)))

@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import os
 import random
 import threading
@@ -15,6 +16,7 @@ from datetime import datetime
 
 from .adapters import AUTH, CONFLICT, ENROLLED, ERR, FULL, OK, UNKNOWN, make
 from .captcha import CaptchaSolver
+from .intent_journal import IntentJournal
 from .notify import Notifier
 
 
@@ -121,59 +123,84 @@ class Engine:
                 pass  # 最后 20ms 忙等，保证触发精度
         self.log.ok("开抢")
 
+    def _intent_term(self) -> str:
+        """Canonicalize semester values before reserving a physical write."""
+        value = self.opts.get("xnxq") or self.cfg.get("xnxq") or self.opts.get("semester")
+        if isinstance(value, dict):
+            year, term = value.get("year"), value.get("term")
+            if any(v is None or isinstance(v, bool) for v in (year, term)):
+                raise ValueError("学期必须包含学年和学期编号")
+            if not str(year).strip() or not str(term).strip():
+                raise ValueError("学期编号不能为空")
+            return f"{str(year).strip()}/{str(term).strip()}"
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        raise ValueError("缺少明确学期标识")
+
     def _worker(self, ad, course):
-        if getattr(ad, "blocked", False):
-            self.log.error(f"[{ad.acct.get('name')}] 凭据熔断，跳过 {course.get('name')}")
-            return
+        """At most one real write for a durable account/term/course intent.
+
+        This older CLI does not have a verified official per-course readback.
+        Therefore any acknowledgement is UNKNOWN, never a confirmed success.
+        Even a FULL or AUTH response cannot authorize an automatic replay.
+        """
         label = f"[{ad.acct.get('name')}/{course.get('name') or course.get('kch_id')}]"
-        interval = float(self.policy.get("interval_ms", 300)) / 1000.0
-        poll = float(self.policy.get("poll_ms", 1200)) / 1000.0
-        jitter = float(self.policy.get("jitter", 0.3))
-        backoff_cap = float(self.policy.get("backoff_cap_ms", 3000)) / 1000.0
-        deadline = time.time() + float(self.policy.get("max_seconds", 1800))
-        attempt = 0
-        sleep_s = interval
-
-        while not self.stop.is_set() and time.time() < deadline:
-            attempt += 1
-            r = ad.grab(course)
-            r.attempts = attempt
+        if getattr(ad, "blocked", False):
+            self.log.error(f"{label} 登录凭据被锁定，未发送选课提交")
+            return
+        db_path = (os.environ.get("KINGO_INTENT_DB")
+                   or os.path.join(os.path.expanduser("~"),
+                                   ".kingo-assistant", "intent-journal.sqlite3"))
+        try:
+            if not isinstance(course, dict) or not (
+                    str(course.get("xkid") or "").strip()
+                    or str(course.get("jxb_ids") or "").strip()):
+                raise ValueError("qiangke 需要明确教学班号，不能只凭课程名称提交")
+            journal = IntentJournal(db_path)
+            reserved = journal.reserve(
+                school=str(self.opts.get("base_url") or "unknown"),
+                account=str(ad.acct.get("user") or ""),
+                term=self._intent_term(),
+                course=course,
+            )
+        except (OSError, ValueError, sqlite3.Error) as exc:
+            self.log.error(f"{label} 本地意图记录不可用，禁止提交：{type(exc).__name__}")
             with self._lock:
-                self.results.append({
-                    "account": ad.acct.get("name") or ad.acct.get("user"),
-                    "course": course.get("name") or course.get("kch_id"),
-                    "code": r.code, "msg": r.msg, "attempts": attempt,
-                    "elapsed": round(r.elapsed, 3),
-                    "at": datetime.now().strftime("%H:%M:%S.%f")[:-3],
-                })
-
-            if r.code in (OK, ENROLLED):
-                self.notifier.hit(ad.acct, course, r)
-                return
-            if r.code == UNKNOWN:
-                self.log.warning(f"{label} 结果待核验，停止自动重发；请查官方已选列表")
-                return
-            if r.code == CONFLICT:
-                self.log.warning(f"{label} 冲突/超限，停止重试：{r.msg}")
-                self.notifier.fail(ad.acct, course, r)
-                return
-            if r.code == AUTH:
-                self.log.warning(f"{label} 会话失效，重登")
-                if not ad.relogin():
-                    time.sleep(1.0)
-                continue
-            if r.code == FULL:
-                sleep_s = poll
-                if attempt % 10 == 1:
-                    self.log.info(f"{label} 满员，继续蹲（第 {attempt} 次）")
-            else:
-                sleep_s = min(sleep_s * 1.5, backoff_cap)
-                if attempt % 5 == 1:
-                    self.log.info(f"{label} {r.code} {r.msg[:60]}（第 {attempt} 次）")
-            time.sleep(sleep_s * (1 + random.uniform(-jitter, jitter)))
-
-        self.log.warning(f"{label} 结束，共尝试 {attempt} 次未成功")
-        self.notifier.fail(ad.acct, course, None)
+                self.results.append({"account": ad.acct.get("name") or "unknown",
+                                     "course": course.get("name") or "",
+                                     "code": UNKNOWN, "msg": "本地意图保护不可用",
+                                     "attempts": 0, "elapsed": 0.0,
+                                     "at": datetime.now().strftime("%H:%M:%S.%f")[:-3]})
+            return
+        if not reserved:
+            self.log.warning(f"{label} 发现历史提交意图，未重发；请先人工核对官方已选课程")
+            with self._lock:
+                self.results.append({"account": ad.acct.get("name") or "unknown",
+                                     "course": course.get("name") or "",
+                                     "code": UNKNOWN, "msg": "已有待核验提交意图，跨重启阻止重复写入",
+                                     "attempts": 0, "elapsed": 0.0,
+                                     "at": datetime.now().strftime("%H:%M:%S.%f")[:-3]})
+            return
+        started = time.perf_counter()
+        try:
+            r = ad.grab(course)
+        except Exception as exc:
+            self.log.error(f"{label} 提交结果不可确认：{type(exc).__name__}")
+            r = None
+        code = getattr(r, "code", UNKNOWN)
+        if code in (OK, ENROLLED, ERR):
+            code = UNKNOWN
+        msg = ("收到提交回执，但无官方逐课程回查，必须人工核验"
+               if code == UNKNOWN else str(getattr(r, "msg", "") or code))
+        with self._lock:
+            self.results.append({
+                "account": ad.acct.get("name") or ad.acct.get("user"),
+                "course": course.get("name") or course.get("kch_id"),
+                "code": code, "msg": msg, "attempts": 1,
+                "elapsed": round(time.perf_counter() - started, 3),
+                "at": datetime.now().strftime("%H:%M:%S.%f")[:-3],
+            })
+        self.log.warning(f"{label} 本次物理提交结束（{code}），结果不可自动重发；官方记录待核对")
 
     # ---------------- 汇总 ----------------
     def _dump(self) -> list[dict]:

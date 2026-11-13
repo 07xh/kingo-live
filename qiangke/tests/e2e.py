@@ -57,6 +57,7 @@ def main() -> int:
     log = qlog.build("e2e", os.path.join(tempfile.gettempdir(), "qk-e2e-logs"))
     log.info(f"mock 启动于 {base}")
 
+    os.environ['KINGO_INTENT_DB'] = os.path.join(tempfile.mkdtemp(prefix='qk-test-intent-'), 'journal.sqlite3')
     eng = Engine(build_cfg(base), log)
     res = eng.run()
     main_submission_count = zf_mock.Handler.state.grab_calls

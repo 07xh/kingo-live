@@ -4,6 +4,7 @@
   "system": {
     "type": "kingo",
     "base_url": "https://jwmis.ncwu.edu.cn",
+    "xnxq": "",
     "timeout": 8,
     "retries": 1,
     "verify_tls": true,
