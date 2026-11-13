@@ -180,6 +180,9 @@ def main() -> int:
         c.check("poller back to idle", pol.next_interval() == 60000.0)
         pol.on_rate_limited(30000.0)
         c.check("poller cooldown", pol.next_interval() == 30000.0)
+        pol.on_rate_limited(120000.0)
+        c.check("Retry-After survives local max interval",
+                pol.next_interval() == 120000.0)
         pol.on_auth_failure()
         c.check("poller halt", pol.next_interval() == 0.0)
 
@@ -198,6 +201,12 @@ def main() -> int:
         c.check("monitor no trigger on decrease",
                 seat_events.ReleaseMonitor.trigger(e3) is False)
         c.check("monitor report", mon.report()["polls"] == 4)
+        # A missing seat count is not a known zero; it cannot prove reopening.
+        unknown_mon = seat_events.ReleaseMonitor()
+        unknown_mon.observe([O("UNKNOWN", "01", 10, None)])
+        unknown_events = unknown_mon.observe([O("UNKNOWN", "01", 10, 3)])
+        c.check("monitor unknown->positive is not reopening",
+                unknown_events == [], str(unknown_events))
 
         # --- ranker -------------------------------------------------------
         ranker = seat_events.TargetRanker()
@@ -223,6 +232,11 @@ def main() -> int:
         c.check("gate reconcile hit",
                 gate.reconcile(targets[0], True) == "confirmed")
         c.check("gate still blocked after confirmed", gate.issue(targets[0]) is False)
+        pending_gate = seat_events.IntentGate()
+        pending_gate.issue(targets[0])
+        c.check("absent readback leaves pending",
+                pending_gate.reconcile(targets[0], False) == "pending")
+        c.check("pending is not reissued", pending_gate.issue(targets[0]) is False)
 
         # --- driver -------------------------------------------------------
         drv = seat_events.EventDriver(targets)
