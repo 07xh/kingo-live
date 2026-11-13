@@ -7,6 +7,7 @@ enrollment record must be inspected before any later enrollment decision.
 """
 from __future__ import annotations
 
+from contextlib import closing
 import hashlib
 import hmac
 import json
@@ -20,7 +21,7 @@ class IntentJournal:
     def __init__(self, path: str | os.PathLike[str]):
         self.path = Path(path).expanduser().resolve()
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        with sqlite3.connect(self.path, timeout=15) as db:
+        with closing(sqlite3.connect(self.path, timeout=15)) as db, db:
             db.execute("CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
             db.execute("CREATE TABLE IF NOT EXISTS attempts (fingerprint TEXT PRIMARY KEY, state TEXT NOT NULL, at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)")
             db.execute("INSERT OR IGNORE INTO metadata (key, value) VALUES ('salt', ?)", (secrets.token_hex(32),))
@@ -48,7 +49,7 @@ class IntentJournal:
         threads unable to acquire the same enrollment intent twice.
         """
         fp = self._fingerprint(school=school, account=account, term=term, course=course)
-        with sqlite3.connect(self.path, timeout=15, isolation_level=None) as db:
+        with closing(sqlite3.connect(self.path, timeout=15, isolation_level=None)) as db:
             db.execute("BEGIN IMMEDIATE")
             try:
                 cursor = db.execute(
