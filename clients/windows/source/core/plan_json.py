@@ -12,13 +12,14 @@ if not getattr(sys, "frozen", False):
     root = Path(__file__).resolve().parents[4]
     if (root / "contracts" / "offering.py").is_file() and str(root) not in sys.path:
         sys.path.insert(0, str(root))
-from contracts.offering import from_standard_record
+from contracts.offering import CourseOffering, from_standard_record
 from .plan_csv import PlanRow, MAX_CSV_BYTES, MAX_CSV_ROWS
 
 
 @dataclass(frozen=True)
 class ImportedSnapshot:
     rows: tuple[PlanRow, ...]
+    offerings: tuple[CourseOffering, ...]
     sources: tuple[str, ...]
     observed_at: tuple[str, ...]
 
@@ -58,6 +59,7 @@ def load_plan_json(path: Path) -> ImportedSnapshot:
             class_id=x.class_id or "", remaining=x.remaining,
             teacher=x.teacher or "", schedule="", room="",
         ) for x in parsed),
+        offerings=tuple(parsed),
         sources=tuple(sorted({x.source for x in parsed})),
         observed_at=tuple(sorted({x.observed_at for x in parsed
                                   if x.observed_at is not None})),
