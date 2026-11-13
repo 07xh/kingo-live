@@ -94,8 +94,12 @@ def main() -> int:
     _, erows = X.parse_table(EMPTY)
     checks["空表无数据行"] = erows == []
     checks["无 kcdm 时回退方括号"] = X.course_code({"kc": "[A001]某某课"}) == "A001"
-    checks["无 skbjdm 时拼班号"] = X.class_code(
-        {"kcdm": "A001", "skbh": "9"}) == "A001-9"
+    checks["不以课程号代替教学班号"] = X.class_code(
+        {"kcdm": "A001"}) == ""
+    checks["不以展示班号拼造教学班号"] = X.class_code(
+        {"kcdm": "A001", "skbh": "9"}) == ""
+    checks["保留原始教学班号前导零"] = X.class_code(
+        {"kcdm": "0001", "skbjdm": "0001-009"}) == "0001-009"
 
     ok = True
     for name, res in checks.items():
