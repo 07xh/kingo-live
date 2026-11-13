@@ -30,6 +30,23 @@
     "w_heat": 0.3,
     "w_priority": 0.05
   },
+  "fingerprint": {
+    "baseline_path": "fp.baseline.json",
+    "har_path": "TARGET_HAR_PATH",
+    "url_contains": "/hsjw//wap/",
+    "cookie_env": "KINGO_COOKIE",
+    "cdp": "http://127.0.0.1:9222",
+    "allow_write": false,
+    "header_order_check": false,
+    "ja3_hex": "TARGET_CLIENTHELLO_HEX",
+    "tls": {
+      "ciphers": [],
+      "alpn": ["h2", "http/1.1"],
+      "min_version": "TLSv1_2",
+      "session_tickets": true,
+      "session_reuse": true
+    }
+  },
   "strategy": {
     "concurrency": 1,
     "sessions": 1,
