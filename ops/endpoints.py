@@ -419,13 +419,16 @@ def run(args: argparse.Namespace) -> dict:
         import recon
     import os
     client = recon.RawGet(args.host, args.port, args.scheme,
-                          os.environ.get(args.cookie_env, ""),
-                          timeout=args.timeout)
+                          timeout=args.timeout,
+                          cookie=os.environ.get(args.cookie_env, ""))
 
     def fetch(e: Endpoint) -> SimpleResponse:
         # recon returns a bounded preview, not the full body: enough for the
         # window marker and content-type, and it keeps the probe read-only.
-        r = client.get(e.url(), preview_bytes=4096)
+        r = client.get(e.url(), preview_bytes=4096,
+                       extra_headers=e.headers)
+        if r.error:
+            raise OSError(r.error)
         body = (r.body_preview or "").encode("utf-8", "replace")
         return SimpleResponse(r.status, dict(r.headers), body, r.ttfb_ms)
 

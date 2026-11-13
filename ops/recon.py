@@ -183,13 +183,20 @@ class RawGet:
         self._conn = conn
         return conn
 
-    def get(self, path: str, preview_bytes: int = 0) -> RawGetResult:
-        conn = self._open()
+    def get(self, path: str, preview_bytes: int = 0,
+            extra_headers: Optional[Dict[str, str]] = None) -> RawGetResult:
+        try:
+            conn = self._open()
+        except (OSError, http.client.HTTPException) as exc:
+            self._conn = None
+            return RawGetResult(path=path, status=0,
+                                error=type(exc).__name__)
         reused = getattr(conn, "_recon_used", False)
         headers = {"Accept": "*/*", "User-Agent": "kingo-ops-recon/1.0"}
         if self.cookie:
             headers["Cookie"] = self.cookie
         headers.update(self.extra_headers)
+        headers.update(extra_headers or {})
         t0 = time.perf_counter()
         t_send = time.time()
         try:
