@@ -62,3 +62,7 @@ are preserved in `clients/windows/source/` in this **private** repository.
   Real NCWU permissions, endpoints, and live submissions are not verified.
 
 See `docs/integration-windows-readonly.md` for scope and verification.
+
+## Legacy Windows HAR draft support (synchronized 2026-11-13)
+
+The Windows client also retains `clients/windows/source/core/har_to_schema.py` from the old `kingo-assistant` repository. It creates an **offline, unverified** protocol draft for the Windows read-only client; it is distinct from the research `kingo-live/har_to_schema.py` schema. The restored `core/har_schema.py` provides fixed-label read-only JSON shape signals without replay or raw request export. Both have dedicated unit tests, and no automatic enrollment submission is enabled in the GUI. See `docs/legacy-windows-sync-2026-11-13.md`.
