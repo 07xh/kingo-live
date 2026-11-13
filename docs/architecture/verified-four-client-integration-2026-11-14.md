@@ -36,10 +36,14 @@
 ## kingo-live 闸门
 
 示例 `kingo-live/config.example.json` 的
-`enrollment.official_verified` 默认为 `false`，`account_scope`、`semester`
-为空。旧引擎在提交前检查这些声明与预期范围一致，不满足则直接阻止该引擎提交。
-**在配置里填写 true 并不是官方接口验收证明**：仍需实际确认会话属于本人、
-字段语义、是否返回完整已选课程列表以及对应学期。
+`enrollment.official_verified` 默认为 `false`，`account_scope`、`semester`、
+`response_account_path`、`response_semester_path` 均为空。
+启用前必须分别确认官方完整已选课程接口、登录账号字段和学期字段。
+旧通用引擎在**任何实际提交前**执行一次只读已选课程查询，
+从响应体提取账号与学期，并与预期值完全比较；缺失、解码失败、不同账号或不同学期均拒绝提交。
+本阶段只支持可直接核实作用域字段的 JSON 响应，未知 HTML 响应不推断成功。
+**在配置里填写 true 并不是官方接口验收证明**：仍需实际核对服务器返回的是本人账号、
+当前学期且完整的已选课程列表，而非课表、目录或登录成功页面。
 回环测试独立使用虚构范围，不证明生产系统可用。
 
 ## 保留、未完成和禁止误报的边界
