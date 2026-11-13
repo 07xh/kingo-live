@@ -26,10 +26,21 @@ jobs:
           python-version: ${{ matrix.python }}
       - name: Compile
         shell: bash
-        run: python -m py_compile kingo-live/*.py bench/*.py ncwu/*.py
+        run: python -m py_compile kingo-live/*.py bench/*.py ncwu/*.py qiangke/run.py qiangke/qk/*.py qiangke/qk/adapters/*.py qiangke/tests/*.py
       - name: Course-plan parser regressions (offline)
         shell: bash
         run: python -m unittest discover -s ncwu/tests -q
+      - name: Qiangke offline tests and local mock E2E
+        shell: bash
+        working-directory: qiangke
+        run: |
+          python tests/test_tls.py
+          python tests/test_pwd.py
+          python tests/test_xk.py
+          python tests/test_guard.py
+          python tests/test_auto.py
+          python tests/e2e_kingo.py
+          python tests/e2e.py
       - name: Real loopback HTTP end-to-end
         shell: bash
         working-directory: kingo-live
