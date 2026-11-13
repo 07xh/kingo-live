@@ -1,8 +1,6 @@
 # 华水抢课（华北水利水电大学 · 青果 KINGOSOFT）
 
-> 本目录是 `kingo-live` 仓库下的独立 Python 实现，与 `ncwu/`、`kingo-live/` 两套并存，互不依赖。
-> 目标系统：`jwmis.ncwu.edu.cn/hsjw`（青果 KINGOSOFT 2019 版）。
-
+目标系统：`https://jwmis.ncwu.edu.cn/hsjw/`（KINGOSOFT 高校智慧校园教学综合服务平台）
 零第三方依赖，Python 3.8+ 直接跑。
 
 **连接安全：** 正式教务站点必须使用 HTTPS 且验证服务器证书（system.verify_tls: true）。
@@ -20,7 +18,7 @@ cd kingo-live/qiangke
 cp config.example.json config.ncwu.json      # 填学号密码
 # 编辑 config.ncwu.json -> accounts[0].user / .pass
 
-python run.py login      # 真实登录
+python run.py login      # 真实登录，并把会话存到 logs/session-<学号>.cookies
 python run.py window     # 看哪个选课流程开着
 python run.py list       # 看有哪些课
 python run.py go         # 开抢
@@ -212,6 +210,51 @@ WARNING 选课窗口未开放：当前时间不是有效的选课时间区段！
 "captcha": {"mode": "http", "url": "https://your-ocr/api"}
 ```
 
+**CAS 统一身份认证（`auth.mode = "cas"`）正常账密登录不弹验证码**：华水 `authserver`
+主表单 `fm1` 只有 username / password(RSA) / execution / encrypted / _eventId / loginType，
+没有 captcha 字段。页面里那些「验证码登录」「滑动登录」是被注释掉的模板，
+只有连续失败或风控才渲染 `captcha2` 弹层 —— 撞上了工具不硬闯，直接报提示，
+改用下面的会话复用。
+
+## 保存 / 复用登录状态
+
+登录成功后 cookie 罐（Netscape 格式）自动落盘，之后所有命令先探测主页，
+会话还活着就**直接进系统，0 次密码请求**：
+
+```json
+"system": {
+  "session_file": "logs/session-{user}.cookies",
+  "session_disabled": false
+}
+```
+
+```bash
+python run.py login              # 首次：真实登录 → 保存会话
+python run.py window             # 之后：自动复用，不再打密码
+python run.py go                 # 开抢：同样复用
+python run.py login --fresh      # 强制重新登录并覆盖会话文件
+
+# 不想再打密码（比如已经输错过几次）：用浏览器登录态直接导入
+python run.py import-cookies --file 已登录.har --verify
+python run.py import-cookies --file cookies.txt --verify   # 插件导出的 Netscape 格式也行
+```
+
+`--verify` 只 GET 一次主页判断会话是否还活着，**不发送任何登录请求，不消耗错误次数**；
+日志只打印 cookie 的名字，不打印值。HAR 里会同时还原 `jwmis` 的 `JSESSIONID`
+和 `authserver` 的 `CASTGC`（含 `.ncwu.edu.cn` 父域）。
+
+| 细节 | 说明 |
+|---|---|
+| 存储内容 | `jwmis` 的 `JSESSIONID` + `authserver` 的 CAS cookie，两个域一起存 |
+| 有效性判据 | 主页 HTTP 200、长度 ≥ 500、URL 不含 login/authserver、正文不含「凭证已失效」 |
+| 失效处理 | 自动回落正常登录；抢课中途掉线也走 `relogin()` 重新保存 |
+| 多账号 | `{user}` 自动替换成学号，模板没带 `{user}` 时自动追加，绝不串号 |
+| 安全 | `logs/` 已在 `.gitignore`；cookie 罐等同账号凭据，别外传、别提交 |
+| 直接导入浏览器会话 | 用浏览器插件导出 Netscape `cookies.txt` 放到 `session_file` 指定路径即可，无需跑登录 |
+
+**为什么这件事重要**：青果本地登录 24h 内错 5 次锁号，CAS 连续失败会弹风控滑块。
+会话复用把每个窗口需要的密码请求从「每次运行 1~2 次」压到「只在会话过期时 1 次」。
+
 ## 返回码分类
 
 `success` 选上 / `enrolled` 已在 / `full` 满员重试 / `conflict` 冲突 / `auth` 会话失效自动重登 / `error` 其它
@@ -224,6 +267,7 @@ python tests/test_pwd.py       # 8 项：双 MD5 与虚构黄金向量一致
 python tests/e2e_kingo.py      # 7 项：双账号并发 → 满员重试 → 全抢到
 python tests/test_guard.py     # 16 项：占位符拦截 / 402 熔断
 python tests/test_auto.py      # 5 项：课程匹配 + 回写 + 不误配
+python tests/test_session.py   # 27 项：cookie 落盘/恢复 + 真实 HTTP 往返 + HAR 导入 + 免重登
 python tests/e2e.py            # 7 项：正方适配器没退化
 python tests/test_tls.py       # 10 项：TLS 校验 / 禁用远程明文 / 本机 mock
 ```

@@ -33,7 +33,7 @@ def _fingerprint(html: str, url: str = "") -> list[str]:
 
 
 def probe_one(url: str, timeout: float = 6.0) -> dict:
-    s = Session(base_url=url, timeout=timeout, retries=0, verify_tls=False)
+    s = Session(base_url=url, timeout=timeout, retries=0, verify_tls=True)
     out = {"url": url, "ok": False, "status": 0, "final": "", "title": "",
            "sign": [], "note": ""}
     try:

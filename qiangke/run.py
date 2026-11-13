@@ -3,9 +3,11 @@
 """华水抢课（青果 KINGOSOFT）—— 命令行入口。
 
   python run.py probe                 探测入口
-  python run.py login                 只登录，验证账号/验证码/加密链路
+  python run.py login                 登录并保存会话（后续命令自动复用，不再打密码）
+  python run.py login --fresh         忽略已存会话，强制重新登录并覆盖
   python run.py discover              登录后列出全部 .action 入口（找选课地址）
   python run.py import-curl --file curl.txt [--apply]   把真实选课请求导成模板
+  python run.py import-cookies --file x.har --verify    从浏览器抓包恢复会话（不再打密码）
   python run.py check                 登录 + 校验 grab_request 是否配好
   python run.py go                    开抢
 """
@@ -24,12 +26,21 @@ from qk.adapters import make                 # noqa: E402
 from qk.captcha import CaptchaSolver         # noqa: E402
 from qk.engine import Engine                 # noqa: E402
 import qk.curl2req as curl2req               # noqa: E402
+import qk.har_cookies as har_cookies         # noqa: E402
 import qk.probe as probe_mod                 # noqa: E402
+
+
+_FORCE_FRESH = False
 
 
 def load(path: str) -> dict:
     with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
+        cfg = json.load(f)
+    sysc = cfg.setdefault("system", {})
+    sysc.setdefault("log_dir", cfg.get("log_dir", "logs"))
+    if _FORCE_FRESH:
+        sysc["session_fresh"] = True
+    return cfg
 
 
 def save(cfg: dict, path: str) -> None:
@@ -84,6 +95,55 @@ def cmd_login(args, log) -> int:
     log.ok(f"登录成功，主页 {r.status}，长度 {len(r.text)}，"
            f"含失效提示={'凭证已失效' in r.text}")
     log.info(f"cookie: {list(ad.session.dump_cookies().keys())}")
+    log.info(f"会话文件: {getattr(ad, 'cookie_file', '') or '未启用'}"
+             f"（下次跑自动复用，--fresh 可强制重登）")
+    return 0
+
+
+def cmd_import_cookies(args, log) -> int:
+    """从浏览器 HAR 恢复会话；--verify 只探测主页，绝不发登录请求。"""
+    from qk.adapters.kingo import session_alive
+    from qk.net import Session
+
+    cfg = load(args.config)
+    if not args.file or not os.path.isfile(args.file):
+        log.error("需要 --file 指向一份已登录状态下的 HAR 抓包")
+        return 2
+    acct = (cfg.get("accounts") or [{}])[0]
+    user = args.user or str(acct.get("user") or "")
+    tpl = (cfg.get("system") or {}).get("session_file") or "logs/session-{user}.cookies"
+    out = tpl.replace("{user}", user).replace("{name}", str(acct.get("name") or ""))
+    if "{user}" not in tpl and user not in os.path.basename(out):
+        root, ext = os.path.splitext(out)
+        out = f"{root}-{user}{ext or '.cookies'}"
+
+    if har_cookies.is_netscape(args.file):
+        cookies, kind = har_cookies.extract_netscape(args.file), "cookies.txt"
+    else:
+        cookies, kind = har_cookies.extract(args.file), "HAR"
+    if not cookies:
+        log.error("文件里没找到 jwmis / authserver 域的 cookie")
+        return 3
+    n = har_cookies.write_jar(cookies, out)
+    log.ok(f"已从 {kind} 恢复 {n} 条 cookie → {out}")
+    for line in har_cookies.describe(cookies):
+        log.info("  " + line)
+
+    if args.verify:
+        sysc = cfg.get("system") or {}
+        s = Session(base_url=sysc.get("base_url") or "https://jwmis.ncwu.edu.cn",
+                    timeout=float(sysc.get("timeout", 8)),
+                    verify_tls=bool(sysc.get("verify_tls", True)),
+                    logger=log, cookie_file=out)
+        try:
+            r = s.get("/hsjw/frame/homes.action", referer="/hsjw/", timeout=8)
+        except Exception as e:
+            log.warning(f"会话探测网络异常（不消耗登录次数）：{e}")
+            return 0
+        if session_alive(r.text, r.url, r.status):
+            log.ok("会话仍有效 → 现在直接跑 window / list / go，0 次密码请求")
+        else:
+            log.warning("会话已过期 → 重新登录一次，或重新导出浏览器已登录状态的 HAR")
     return 0
 
 
@@ -312,10 +372,11 @@ def cmd_go(args, log) -> int:
 def main() -> int:
     ap = argparse.ArgumentParser(description="华北水利水电大学 抢课工具（青果 KINGOSOFT）")
     ap.add_argument("cmd", nargs="?", default="go",
-                    choices=["go", "auto", "probe", "login", "discover", "import-curl", "check", "diff-login", "window", "list"])
+                    choices=["go", "auto", "probe", "login", "discover", "import-curl",
+                             "import-cookies", "check", "diff-login", "window", "list"])
     ap.add_argument("-c", "--config", default="config.ncwu.json")
     ap.add_argument("--url", default="", help="probe 指定地址")
-    ap.add_argument("--file", default="", help="import-curl 读文件，缺省读 stdin")
+    ap.add_argument("--file", default="", help="import-curl / import-cookies 读文件")
     ap.add_argument("--apply", action="store_true", help="import-curl 结果写入配置")
     ap.add_argument("--write", action="store_true", help="probe 结果写入配置")
     ap.add_argument("--dry", action="store_true", help="只跑 1 秒验证链路")
@@ -324,13 +385,21 @@ def main() -> int:
     ap.add_argument("--dry-run", action="store_true",
                     help="login 时只做本地自检，不发登录请求（不消耗错误次数）")
     ap.add_argument("-q", "--quiet", action="store_true")
+    ap.add_argument("--fresh", action="store_true",
+                    help="忽略已保存的会话，强制重新登录（登录后覆盖会话文件）")
+    ap.add_argument("--user", default="", help="import-cookies 指定学号，决定会话文件名")
+    ap.add_argument("--verify", action="store_true",
+                    help="import-cookies 后探测主页是否有效（不发登录请求）")
     args = ap.parse_args()
 
+    global _FORCE_FRESH
+    _FORCE_FRESH = args.fresh
     os.chdir(HERE)
     log = qlog.build("qk", os.path.join(HERE, "logs"), quiet=args.quiet)
     log.info(f"华水抢课 v{__import__('qk').__version__}  cmd={args.cmd}  cfg={args.config}")
     table = {"probe": cmd_probe, "login": cmd_login, "discover": cmd_discover,
-             "import-curl": cmd_import_curl, "check": cmd_check, "go": cmd_go,
+             "import-curl": cmd_import_curl, "import-cookies": cmd_import_cookies,
+             "check": cmd_check, "go": cmd_go,
              "auto": cmd_auto, "diff-login": cmd_diff_login, "window": cmd_window, "list": cmd_list}
     try:
         return table[args.cmd](args, log)

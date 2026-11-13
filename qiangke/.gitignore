@@ -7,6 +7,10 @@ logs/
 status-*.json
 probe-result.json
 
+# 会话 cookie 罐等同账号凭据，无论配置到哪个路径都别入库
+*.cookies
+cookies.txt
+
 # 抓包与逆向现场：学校站点 JS、HAR 样本，不入库
 _recon/
 

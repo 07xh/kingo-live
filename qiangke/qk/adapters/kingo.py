@@ -17,6 +17,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import os
 import random
 import re
 import time
@@ -57,6 +58,24 @@ OK_WORDS = ("成功", "选课成功", "操作成功", "\"status\":\"200\"")
 ENROLLED_WORDS = ("已选", "已经选", "重复", "已存在")
 FULL_WORDS = ("已满", "人数已满", "余量不足", "无余量", "容量")
 CONFLICT_WORDS = ("冲突", "学分", "门数", "时间不", "先修")
+
+# 已恢复的 cookie 失效时，青果会把 homes.action 302 到登录页或直接吐「凭证已失效」
+DEAD_WORDS = ("凭证已失效", "登录超时", "会话已过期", "session expired", "未登录或登录")
+
+
+def session_alive(text: str, url: str = "", status: int = 200) -> bool:
+    """纯判据：主页响应是否代表有效登录态（不发登录请求，不消耗错误次数）。"""
+    if status != 200:
+        return False
+    u = (url or "").lower()
+    if any(k in u for k in ("login.action", "authserver", "caslogin", "/login?")):
+        return False
+    t = text or ""
+    if len(t) < 500:
+        return False
+    if any(w in t for w in DEAD_WORDS):
+        return False
+    return True
 
 
 class CredentialBlocked(Exception):
@@ -140,6 +159,21 @@ class KingoAdapter(Adapter):
         self.list_request = self.cfg.get("list_request") or {}
         self.solver = solver
         self.vars: dict[str, str] = {}
+        self.cookie_file = self._cookie_path()
+
+    # ---------- 会话文件 ----------
+    def _cookie_path(self) -> str:
+        """cookie 罐路径，多账号自动分文件，避免串号。"""
+        if self.cfg.get("session_disabled"):
+            return ""
+        user = str(self.acct.get("user") or "anon").strip()
+        tpl = self.cfg.get("session_file") or os.path.join(
+            self.cfg.get("log_dir") or "logs", "session-{user}.cookies")
+        path = tpl.replace("{user}", user).replace("{name}", str(self.acct.get("name") or ""))
+        if "{user}" not in tpl and user not in os.path.basename(path):
+            root, ext = os.path.splitext(path)
+            path = f"{root}-{user}{ext or '.cookies'}"
+        return path if os.path.isabs(path) else os.path.abspath(path)
 
     # ---------- 基础 ----------
     def p(self, key: str) -> str:
@@ -153,7 +187,11 @@ class KingoAdapter(Adapter):
         return "/" + first
 
     def open(self) -> None:
+        # 复用基类的统一连接策略（HTTPS + 证书校验），再挂上会话罐并恢复
         self.session = self.make_session(self.base_url)
+        self.session.cookie_file = self.cookie_file
+        if self.cookie_file:
+            self.session.load_cookies()
         try:
             t0 = time.time()
             self.session.get(self.p("entry"), timeout=8)
@@ -162,6 +200,28 @@ class KingoAdapter(Adapter):
             self.log.warning(f"入口不可达：{e}")
 
     # ---------- 登录 ----------
+    def _reuse_session(self) -> bool:
+        """已存 cookie 仍有效就直接进系统，一次登录请求都不发。
+
+        CAS 正常账密登录不弹验证码；复用会话还能避开「连续失败触发风控验证码」
+        和青果本地登录的 24h 错 5 次锁号。
+        """
+        if not self.session or not self.cookie_file or self.cfg.get("session_fresh"):
+            return False
+        if not os.path.isfile(self.cookie_file):
+            return False
+        try:
+            r = self.session.get(self.p("home"), referer="/hsjw/", timeout=6)
+        except NetError as e:
+            self.log.warning(f"复用会话探测失败（改走登录）：{e}")
+            return False
+        if not session_alive(r.text, r.url, r.status):
+            self.log.info("已存会话已过期，改走正常登录")
+            return False
+        self.logged_in = True
+        self.log.ok(f"[{self.acct.get('name','')}] 复用已存会话，跳过登录（0 次密码请求）")
+        return True
+
     def _validate_acct(self) -> None:
         """占位符/空值直接拦下 —— 一次请求都不发，别白送错误次数。"""
         u = str(self.acct.get("user") or "").strip()
@@ -179,6 +239,8 @@ class KingoAdapter(Adapter):
             if getattr(self, "blocked", False):
                 self.log.error("凭据已熔断，拒绝再试（防止锁号）")
                 return False
+            if self._reuse_session():
+                return True
             try:
                 self._validate_acct()
             except CredentialBlocked as e:
@@ -194,6 +256,7 @@ class KingoAdapter(Adapter):
                     if self._login_once(attempt):
                         self.logged_in = True
                         self.log.ok(f"[{self.acct.get('name','')}] 登录成功")
+                        self.session.save_cookies()
                         return True
                 except CredentialBlocked as e:
                     self.blocked = True
@@ -241,7 +304,8 @@ class KingoAdapter(Adapter):
             self.log.error("CAS 通过，但青果未接受会话（ticket 未生效）")
             return False
         self.logged_in = True
-        self.log.ok(f"[{self.acct.get('name','')}] 登录成功（CAS）")
+        self.log.ok(f"[{self.acct.get('name','')}] 登录成功（CAS，免验证码）")
+        self.session.save_cookies()
         return True
 
     def _login_once(self, attempt: int = 0) -> bool:
