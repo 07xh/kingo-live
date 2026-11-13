@@ -686,9 +686,9 @@ class KingoAdapter(Adapter):
             code = self._classify(raw, r.url)
             # The endpoint may acknowledge even a nonexistent course. Neither
             # generic success text nor an unrecognized response proves enrollment.
-            if code in (OK, ERR) or not 200 <= r.status < 300:
+            if code in (OK, ENROLLED, ERR) or not 200 <= r.status < 300:
                 code = UNKNOWN if code != AUTH else AUTH
-            res = GrabResult(code in (OK, ENROLLED), code, raw.strip()[:200] or f"HTTP {r.status}",
+            res = GrabResult(False, code, raw.strip()[:200] or f"HTTP {r.status}",
                              course, 0, time.time() - t0, raw[:600])
             if code == AUTH:
                 self.logged_in = False
