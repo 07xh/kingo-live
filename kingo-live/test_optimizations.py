@@ -149,6 +149,10 @@ class OptimizationTests(unittest.TestCase):
         c["catalog"]["path"] = "/catalog"
         c["submit"]["path"] = "/submit"
         c["enrollment"]["path"] = "/enrollment"
+        c["account_scope"] = "fictional-test-account"
+        c["enrollment"].update({"official_verified": True,
+                                "account_scope": c["account_scope"],
+                                "semester": c["xnxq"]})
         c["clock"]["path"] = "/catalog"
         c["clock"]["samples"] = samples
         c["clock"]["header"] = clock_header
