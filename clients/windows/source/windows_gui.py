@@ -1165,6 +1165,49 @@ def run_packaged_gui_smoke() -> None:
             try:
                 app.withdraw()  # No visible desktop interference in CI.
                 app.update()
+                # The same shared HAR analyzer must work inside a frozen EXE,
+                # not just during source-mode tests. The fixture is synthetic.
+                import json
+                synthetic = Path(directory) / "synthetic-offline.har"
+                synthetic.write_text(json.dumps({
+                    "log": {"entries": [{
+                        "request": {
+                            "method": "GET",
+                            "url": "https://synthetic.invalid/catalog",
+                            "headers": [],
+                        },
+                        "response": {
+                            "status": 200,
+                            "headers": [],
+                            "content": {
+                                "mimeType": "application/json",
+                                "text": json.dumps({
+                                    "data": {"rows": [{
+                                        "kcid": "FAKE101", "skbj": "CLASS1",
+                                        "kyl": 1
+                                    }]}
+                                }),
+                            },
+                        },
+                    }]}
+                }), encoding="utf-8")
+                from core.kingo_live_bridge import classify_har
+                stats = classify_har(synthetic)
+                if stats["api_entries"] != 1:
+                    raise AssertionError("Bundled shared HAR parser is missing")
+                with patch.object(filedialog, "askopenfilename",
+                                  return_value=str(synthetic)):
+                    with patch.object(messagebox, "showinfo") as har_dialog:
+                        app.review_cross_project_har()
+                        deadline_har = time.monotonic() + 3.0
+                        while app._live_har_in_progress and time.monotonic() < deadline_har:
+                            app.update()
+                            time.sleep(0.02)
+                        if app._live_har_in_progress:
+                            raise AssertionError("Offline HAR UI integration stalled")
+                        har_dialog.assert_called_once()
+                        if "有效请求条目：1" not in str(har_dialog.call_args.args[1]):
+                            raise AssertionError("Offline HAR UI aggregate not displayed")
                 with patch.object(messagebox, "showinfo") as entries_dialog:
                     app.show_official_entries()
                     entries_dialog.assert_called_once()
