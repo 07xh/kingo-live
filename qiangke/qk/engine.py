@@ -13,6 +13,15 @@ import random
 import threading
 import time
 from datetime import datetime
+from pathlib import Path
+import sys
+
+# Legacy CLI runs from qiangke/, while the shared readback contract lives at
+# repository root. No network code or credentials are imported.
+_root = Path(__file__).resolve().parents[2]
+if (_root / "contracts" / "enrollment_evidence.py").is_file() and str(_root) not in sys.path:
+    sys.path.insert(0, str(_root))
+from contracts.enrollment_evidence import pending_receipt, VerificationState
 
 from .adapters import AUTH, CONFLICT, ENROLLED, ERR, FULL, OK, UNKNOWN, make
 from .captcha import CaptchaSolver
@@ -190,8 +199,14 @@ class Engine:
         code = getattr(r, "code", UNKNOWN)
         if code in (OK, ENROLLED, ERR):
             code = UNKNOWN
-        msg = ("收到提交回执，但无官方逐课程回查，必须人工核验"
-               if code == UNKNOWN else str(getattr(r, "msg", "") or code))
+        # Shared four-client result contract: a transport receipt is pending,
+        # never SUCCESS. Preserve named business diagnostics for troubleshooting
+        # but never turn them into official enrollment confirmation.
+        verdict = pending_receipt()
+        if verdict.state is not VerificationState.PENDING:
+            raise RuntimeError("统一提交回执状态异常")
+        msg = ("请求已发出，待官方逐课程核验；禁止自动重发"
+               if code == UNKNOWN else f"收到服务器诊断：{code}；实际选课结果待核验")
         with self._lock:
             self.results.append({
                 "account": ad.acct.get("name") or ad.acct.get("user"),
