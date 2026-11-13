@@ -285,6 +285,12 @@ class Orchestrator:
         if key in self._executed:
             return {"acted": False,
                     "reason": "order already executed for this target"}
+        if not (str(target.get("course_id") or "").strip()
+                and str(target.get("class_id") or "").strip()):
+            self.driver.gate.mark_pending(target, "missing exact teaching-class identity")
+            self.orders.append({"target": target, "acted": False,
+                                "reason": "missing exact teaching-class identity"})
+            return {"acted": False, "reason": "missing exact teaching-class identity"}
         if self.mission.executor is None:
             self.driver.gate.mark_pending(target, "monitor-only: no executor")
             self.orders.append({"target": target, "acted": False,
@@ -294,6 +300,9 @@ class Orchestrator:
             if self.plan.prebuild else None
         order = {"target": target, "body_prebuilt": body is not None,
                  "channel": self.plan.channel}
+        # The callback may have sent a physical request before it raises.
+        # Fence this order BEFORE invoking the external executor, not after.
+        self._executed.add(key)
         try:
             result = self.mission.executor(target)
             order["result"] = str(result)
@@ -304,7 +313,6 @@ class Orchestrator:
             self.orders.append(order)
             return order
         order["acted"] = True
-        self._executed.add(key)
         self.orders.append(order)
         return order
 
