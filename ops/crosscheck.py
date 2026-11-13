@@ -50,10 +50,13 @@ class Evidence:
     stale: bool = False                # cached / older than the submit
     source: str = ""
     at: float = field(default_factory=time.time)
+    semester: str = ""
+    account_scope: str = ""
 
     def public(self) -> dict:
         d = asdict(self)
         d["at"] = round(self.at, 3)
+        d["account_scope_present"] = bool(d.pop("account_scope", ""))
         return d
 
 
@@ -82,15 +85,37 @@ def _weight(e: Evidence) -> float:
 
 
 def fuse(target: Dict[str, str], evidence: Iterable[Evidence]) -> Verdict:
-    """Fuse all channels that answer for this exact (course_id, class_id)."""
-    cid = str(target.get("course_id", ""))
-    cls = str(target.get("class_id", ""))
-    rows = [e for e in evidence
-            if e.course_id == cid and (not cls or e.class_id in ("", cls))]
+    """Reconcile a scoped, exact course + teaching-class identity.
+
+    Only a fresh official selected-course record for the same account and
+    semester can confirm enrollment. Timetable/credit evidence can explain
+    inconsistencies, but cannot independently create a confirmed result.
+    """
+    cid = str(target.get("course_id") or "").strip()
+    cls = str(target.get("class_id") or "").strip()
+    semester = str(target.get("semester") or "").strip()
+    account = str(target.get("account_scope") or "").strip()
+    minimum_at = float(target.get("intent_at") or 0.0)
+
+    # One latest record per channel, preventing multiple reads of one
+    # downstream cache from artificially accumulating enough weight.
+    latest: Dict[str, Evidence] = {}
+    for e in evidence:
+        if (not cid or not cls or e.course_id != cid or e.class_id != cls
+                or (semester and e.semester != semester)
+                or (account and e.account_scope != account)
+                or e.at < minimum_at):
+            continue
+        previous = latest.get(e.channel)
+        if previous is None or e.at >= previous.at:
+            latest[e.channel] = e
+    rows = list(latest.values())
+
     pos = neg = 0.0
     used: List[str] = []
     stale: List[str] = []
-    authoritative_negative = False
+    fresh_official_positive = False
+    fresh_official_negative = False
     for e in rows:
         if e.present is None:
             continue
@@ -102,41 +127,37 @@ def fuse(target: Dict[str, str], evidence: Iterable[Evidence]) -> Verdict:
             pos += w
         else:
             neg += w
-            if e.channel == "official_list" and not e.stale:
-                authoritative_negative = True
+        if e.channel == "official_list" and not e.stale:
+            fresh_official_positive = e.present is True
+            fresh_official_negative = e.present is False
 
-    independent_pos = {e.channel for e in rows
-                       if e.present and not e.stale}
-    if not rows or not used:
+    scope_verified = bool(cid and cls and semester and account)
+    positive_clues = any(e.present is True for e in rows)
+    if not used:
         v, conf, reason, action = "unknown", 0.0, \
-            "no channel answered for this target", "keep_pending"
-    elif authoritative_negative and pos > 0:
+            "no exact, scoped, timely channel evidence", "keep_pending"
+    elif fresh_official_negative and positive_clues:
         v, conf, reason, action = "contradicted", 0.5, \
-            "fresh official list says absent while another channel says present", \
+            "official exact-class negative conflicts with other evidence", \
             "human_check"
-    elif pos >= CONFIRM_THRESHOLD and len(independent_pos) >= 2:
-        v, conf, reason, action = "confirmed", min(0.99, 0.6 + 0.1 * pos), \
-            "two or more independent non-stale channels agree on presence", \
-            "terminal"
-    elif pos >= 1.0 and "official_list" in independent_pos:
+    elif scope_verified and fresh_official_positive:
         v, conf, reason, action = "confirmed", 0.85, \
-            "fresh official list confirms the exact course identity", \
+            "fresh official selected-list matches exact class/account/semester", \
             "terminal"
-    elif neg > 0 and all(e.stale for e in rows if e.present is False) and pos == 0:
-        v, conf, reason, action = "pending", 0.3, \
-            "only stale negative reads; a cached list cannot falsify a submit", \
+    elif fresh_official_positive and not scope_verified:
+        v, conf, reason, action = "pending", 0.4, \
+            "official result not bound to verified account and semester", \
             "keep_pending"
     elif pos > 0 and neg > 0:
         v, conf, reason, action = "pending", 0.4, \
-            "channels disagree without a fresh authoritative negative", \
-            "keep_pending"
+            "non-authoritative channels disagree", "keep_pending"
     elif pos > 0:
         v, conf, reason, action = "pending", 0.5, \
-            "weak/partial positive evidence; keep the intent pending", \
+            "positive clues without authoritative identity-bound readback", \
             "keep_pending"
     else:
         v, conf, reason, action = "pending", 0.2, \
-            "all answers negative; never promote HTTP 200 to success", \
+            "negative evidence is not proof of rejected submission", \
             "keep_pending"
 
     return Verdict(cid, cls, v, round(conf, 3), round(pos, 3), round(neg, 3),

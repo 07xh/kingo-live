@@ -122,7 +122,8 @@ class AdaptivePoller:
         if self.state == "halt":
             return 0.0
         if self.penalty_ms > 0.0:
-            v = min(self.penalty_ms, self.maximum)
+            # Do not cap server-required Retry-After to the local interval.
+            v = self.penalty_ms
             self.penalty_ms = 0.0
             self._move("idle", "penalty_served")
             return v
@@ -144,6 +145,15 @@ class AdaptivePoller:
 # snapshot diff
 # ---------------------------------------------------------------------------
 
+def known_remaining(offer: Any) -> Optional[int]:
+    """Use the canonical `remaining` field without treating unknown as zero."""
+    value = (getattr(offer, "remaining") if hasattr(offer, "remaining")
+             else getattr(offer, "remain", None))
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value
+
+
 class ReleaseMonitor:
     """Diff consecutive real catalog reads. Empty polls produce no events."""
 
@@ -158,16 +168,22 @@ class ReleaseMonitor:
         now = time.time()
         current = {}
         for o in offers:
+            if (not getattr(o, "course_id", None)
+                    or not getattr(o, "class_id", None)
+                    or known_remaining(o) is None):
+                continue  # partial/unknown records cannot establish an event
             current[self._fp(o)] = o
         out: List[ReleaseEvent] = []
         for fp, o in current.items():
-            cur = int(getattr(o, "remain", 0) or 0)
+            cur = known_remaining(o)
             prev = self.snapshot.get(fp)
             if prev is None:
                 if cur > 0:
                     out.append(self._event("new", o, cur, None, now, poll_cost_ms))
                 continue
-            prv = int(getattr(prev, "remain", 0) or 0)
+            prv = known_remaining(prev)
+            if prv is None:
+                continue
             if cur == prv:
                 continue
             if prv <= 0 < cur:
@@ -177,7 +193,10 @@ class ReleaseMonitor:
             else:
                 kind = "decreased"
             out.append(self._event(kind, o, cur, prv, now, poll_cost_ms))
-        self.snapshot = current
+        # Empty and partial snapshots are not proof that a course disappeared.
+        # Retain prior comparable observations instead of inventing a "new"
+        # event after a transient parser failure.
+        self.snapshot.update(current)
         self.events.extend(out)
         return out
 
@@ -235,11 +254,16 @@ class TargetRanker:
         return None
 
     def score(self, offer: Offering, priority: int = 1) -> float:
-        cap = max(1, int(offer.capacity or 0))
-        ratio = min(1.0, max(0.0, int(offer.remain or 0) / cap))
-        heat = min(1.0, max(0.0, float(offer.heat or 0.0)))
-        return round(self.w_remain * ratio
-                     + self.w_heat * (1.0 - heat)
+        remain = known_remaining(offer)
+        if remain is None or remain <= 0:
+            return float("-inf")
+        capacity = getattr(offer, "capacity", None)
+        ratio = (min(1.0, remain / capacity)
+                 if isinstance(capacity, int) and capacity > 0 else 0.0)
+        heat = getattr(offer, "heat", None)
+        heat_bonus = (self.w_heat * (1.0 - min(1.0, max(0.0, float(heat))))
+                      if heat is not None else 0.0)
+        return round(self.w_remain * ratio + heat_bonus
                      - self.w_priority * max(0, priority - 1), 6)
 
     def reorder(self, targets: List[dict],
@@ -249,7 +273,7 @@ class TargetRanker:
             if not t.get("enabled", True):
                 continue
             o = self._match(offers, t)
-            if o is None:
+            if o is None or not known_remaining(o):
                 continue
             prio = int(t.get("priority", i + 1))
             scored.append((self.score(o, prio), prio, dict(t)))
@@ -291,7 +315,8 @@ class IntentGate:
 
     def reconcile(self, target: dict, official_hit: bool) -> str:
         k = self.key(target)
-        state = "confirmed" if official_hit else "rejected"
+        # A missing record alone cannot prove the server rejected a request.
+        state = "confirmed" if official_hit else "pending"
         self.states[k] = state
         self.history.append({"key": k, "event": state, "at": time.time()})
         return state
@@ -318,18 +343,21 @@ class EventDriver:
         self.decisions: List[Decision] = []
 
     def poll(self, offers: List[Offering], poll_cost_ms: float = 0.0,
-             status: int = 200) -> Decision:
+             status: int = 200, retry_after_ms: float = 0.0) -> Decision:
         if status in (401, 403):
             self.poller.on_auth_failure()
             d = Decision("auth", "stop", f"http={status}")
         elif status == 429:
-            self.poller.on_rate_limited()
+            self.poller.on_rate_limited(retry_after_ms)
             d = Decision("rate_limited", "backoff", "http=429",
                          self.poller.next_interval())
         elif status in (500, 502, 503, 504):
             self.poller.on_overload()
             d = Decision("overload", "backoff", f"http={status}",
                          self.poller.next_interval())
+        elif status != 200:
+            d = Decision("invalid_snapshot", "stop",
+                         f"http={status}; catalog not verified")
         else:
             events = self.monitor.observe(offers, poll_cost_ms)
             if ReleaseMonitor.trigger(events):

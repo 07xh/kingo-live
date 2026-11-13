@@ -6,9 +6,9 @@ signature performs static analysis only - it never executes a hook or a request.
 """
 from . import (recon, seat_events, p5_probe,  # noqa: F401
                fingerprint, fingerprint_bridge,
-               endpoints, preflight, crosscheck, signature)
+               endpoints, preflight, crosscheck, signature, offering_bridge)
 
 __all__ = ["recon", "seat_events", "p5_probe", "fingerprint",
            "fingerprint_bridge", "endpoints", "preflight",
-           "crosscheck", "signature"]
+           "crosscheck", "signature", "offering_bridge"]
 __version__ = "2.0.0"

@@ -8,6 +8,10 @@ import unittest
 import endpoints
 import fingerprint
 import recon
+import seat_events
+import crosscheck
+import offering_bridge
+from types import SimpleNamespace
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -85,6 +89,83 @@ class HardeningTests(unittest.TestCase):
         encoded = baseline.to_json()
         for secret in ("SECRET_ID", "SECRET_HEADER", "SECRET_REF"):
             self.assertNotIn(secret, encoded)
+
+    def test_exact_scope_required_for_confirmation(self):
+        target = {"course_id": "C1", "class_id": "01",
+                  "semester": "term-A", "account_scope": "account-A"}
+        Evidence = crosscheck.Evidence
+        base = dict(semester="term-A", account_scope="account-A")
+        no_class = Evidence("official_list", "C1", "", True, **base)
+        self.assertNotEqual(crosscheck.fuse(target, [no_class]).verdict,
+                            "confirmed")
+        wrong_class = Evidence("official_list", "C1", "02", True, **base)
+        self.assertNotEqual(crosscheck.fuse(target, [wrong_class]).verdict,
+                            "confirmed")
+        wrong_account = Evidence("official_list", "C1", "01", True,
+                                 semester="term-A", account_scope="account-B")
+        self.assertNotEqual(crosscheck.fuse(target, [wrong_account]).verdict,
+                            "confirmed")
+        wrong_term = Evidence("official_list", "C1", "01", True,
+                              semester="term-B", account_scope="account-A")
+        self.assertNotEqual(crosscheck.fuse(target, [wrong_term]).verdict,
+                            "confirmed")
+        exact = Evidence("official_list", "C1", "01", True, **base)
+        self.assertEqual(crosscheck.fuse(target, [exact]).verdict, "confirmed")
+        unscoped = {"course_id": "C1", "class_id": "01"}
+        self.assertNotEqual(crosscheck.fuse(unscoped, [exact]).verdict,
+                            "confirmed")
+        self.assertNotIn("account-A", json.dumps(exact.public()))
+
+    def test_independent_nonofficial_channels_not_authoritative(self):
+        target = {"course_id": "C1", "class_id": "01",
+                  "semester": "term-A", "account_scope": "account-A"}
+        fields = dict(semester="term-A", account_scope="account-A")
+        evidence = [
+            crosscheck.Evidence("wap_schedule", "C1", "01", True, **fields),
+            crosscheck.Evidence("credit_summary", "C1", "01", True, **fields),
+            crosscheck.Evidence("zxxq", "C1", "01", True, **fields),
+        ]
+        self.assertEqual(crosscheck.fuse(target, evidence).verdict, "pending")
+        repeated = evidence + [crosscheck.Evidence(
+            "wap_schedule", "C1", "01", True, **fields)]
+        self.assertEqual(crosscheck.fuse(target, repeated).positive,
+                         crosscheck.fuse(target, evidence).positive)
+
+    def test_canonical_snapshot_preserves_unknowns(self):
+        record = SimpleNamespace(source="ncwu.plan", course_id="C1",
+                                 class_id="01", course_name="Course",
+                                 teacher=None, remaining=None,
+                                 observed_at=None)
+        normalized = offering_bridge.normalize_readonly(record)
+        self.assertIsNone(normalized.remaining)
+        self.assertEqual(normalized.identity_level, "exact")
+        monitor = seat_events.ReleaseMonitor()
+        self.assertEqual(monitor.observe([normalized]), [])
+        valid = SimpleNamespace(source="ncwu.plan", course_id="C1",
+                                class_id="01", course_name="Course",
+                                remaining=3, observed_at=None)
+        self.assertEqual([x.kind for x in monitor.observe([valid])], ["new"])
+        self.assertEqual(monitor.observe([]), [])
+        self.assertEqual(monitor.observe([normalized]), [])
+        self.assertEqual(monitor.observe([valid]), [])
+        self.assertEqual(len(monitor.snapshot), 1)
+        self.assertIsNone(offering_bridge.normalize_readonly(
+            SimpleNamespace(course_id="C1", class_id=None,
+                            remaining=None)).class_id)
+
+    def test_event_readback_and_unexpected_response(self):
+        gate = seat_events.IntentGate()
+        target = {"course_id": "C1", "class_id": "01"}
+        gate.issue(target)
+        self.assertEqual(gate.reconcile(target, False), "pending")
+        self.assertFalse(gate.allow(target))
+        driver = seat_events.EventDriver([target])
+        self.assertEqual(driver.poll([], status=302).kind, "invalid_snapshot")
+        self.assertEqual(driver.poll([], status=429, retry_after_ms=120000).interval_ms,
+                         120000.0)
+        ranker = seat_events.TargetRanker()
+        self.assertEqual(ranker.reorder(
+            [target], [seat_events.Offering("C1", "01", 60, 0)]), [])
 
 
 if __name__ == "__main__":

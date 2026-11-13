@@ -195,3 +195,13 @@ python fingerprint_bridge.py --cdp http://127.0.0.1:9222 \
 - `test_phase2.py` 的 182 项含一个真实回环 HTTP 靶标（16 端点、3 种响应形状），验证聚类、限流头、窗口标记与推荐；**没有**连学校主机、没有真 APK、没有真 Chrome、没有真 TLS 握手。
 - `#10`（同网段物理位次）、`#11`（条件竞争超发）**刻意未实现**：#10 是部署动作不是代码；#11 破坏意图幂等、高方差，只在确认服务端无事务锁后单独评估。
 - 所有真实端点、轮次参数、类名方法名、票据名仍为 `TARGET_*`；拿到 HAR / APK 后按 `config.example.json` 回填，判据不变。
+
+
+## CI + cross-module read-only contract (2026-11-14)
+
+- Ubuntu and Windows CI run all four local regression scripts, including `test_hardening.py`; all network tests use loopback targets.
+- `offering_bridge.normalize_readonly()` accepts canonical `CourseOffering.remaining` and legacy `Offering.remain` structurally. Missing seats and teaching-class IDs remain unknown; the bridge does not import or modify any executable enrollment adapter.
+- `crosscheck.fuse()` confirms only a fresh, exact official-list entry bound to explicit `account_scope` and `semester`. Supporting timetable/credit signals never create confirmation by themselves. Repeated observations from one channel count once; optional `intent_at` excludes older observations.
+- `seat_events` ignores unknown/partial snapshots, does not manufacture a fresh release after an empty poll, and does not replace durable journals or the existing request budget.
+- `endpoints.run()` propagates explicit per-endpoint read-only headers; diagnostic public reports omit raw response values and request path values.
+- No live enrollment acceptance, signed-request replay, write integration or school-host test is implied by CI green.
