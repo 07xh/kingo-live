@@ -52,11 +52,12 @@ def build_cfg(base: str) -> dict:
 
 
 def main() -> int:
-    srv, port = zf_mock.serve(0, full_first=2)
+    srv, port = zf_mock.serve(0, full_first=0)
     base = f"http://127.0.0.1:{port}"
     log = qlog.build("e2e", os.path.join(tempfile.gettempdir(), "qk-e2e-logs"))
     log.info(f"mock 启动于 {base}")
 
+    os.environ['KINGO_INTENT_DB'] = os.path.join(tempfile.mkdtemp(prefix='qk-test-intent-'), 'journal.sqlite3')
     eng = Engine(build_cfg(base), log)
     res = eng.run()
 
@@ -85,9 +86,9 @@ def main() -> int:
 
     checks = {
         "收到回执仍为待核验": bool(ok),
-        "重试生效(>=3次)": any(r["attempts"] >= 3 for r in ok),
+        "单次提交保护": all(r["attempts"] == 1 for r in ok),
         "登录成功": zf_mock.Handler.state.logins >= 1,
-        "接口被打": zf_mock.Handler.state.grab_calls >= 3,
+        "接口被打": zf_mock.Handler.state.grab_calls >= 1,
         "会话失效判AUTH": r_auth.code == "auth",
         "探测识别正方": pick.get("system") == "zfsoft",
         "状态文件落盘": os.path.isdir(os.path.join(tempfile.gettempdir(), "qk-e2e-logs")),
