@@ -20,6 +20,8 @@ import json
 import os
 from pathlib import Path
 import secrets
+import sqlite3
+import sys
 import tempfile
 import threading
 from typing import Protocol, Sequence
@@ -93,7 +95,9 @@ class AttemptJournal:
     retained as legacy-pending and require official reconciliation.
     """
 
-    def __init__(self, path: Path, semester: str, account_scope: str = "local-default"):
+    def __init__(self, path: Path, semester: str, account_scope: str = "local-default",
+                 *, shared_intent_db: Path | None = None,
+                 school_origin: str = "", verified_account_id: str = ""):
         self.path = Path(path)
         if not isinstance(semester, str) or not semester.strip():
             raise ValueError("学期不能为空")
@@ -103,6 +107,21 @@ class AttemptJournal:
             raise ValueError("账户隔离标识无效")
         self.semester = semester.strip()
         self.account_scope = account_scope
+        # Explicitly opt in only after an adapter validates the SAME real
+        # account, origin and term used by the older Qiangke/NCWU/kingo-live
+        # clients. Unknown aliases must not silently claim cross-tool dedup.
+        self.shared_intent_db = None
+        self.school_origin = ""
+        self.verified_account_id = ""
+        if shared_intent_db is not None:
+            if (not isinstance(school_origin, str) or not school_origin.strip()
+                    or not isinstance(verified_account_id, str)
+                    or not verified_account_id.strip()
+                    or any(ord(c) < 32 for c in school_origin + verified_account_id)):
+                raise ValueError("共享意图闸门缺少已核实学校或账号")
+            self.shared_intent_db = Path(shared_intent_db).expanduser()
+            self.school_origin = school_origin.strip()
+            self.verified_account_id = verified_account_id.strip()
         self.lock_path = self.path.with_name(self.path.name + ".lock")
 
     def _prepare(self) -> None:
@@ -244,7 +263,28 @@ class AttemptJournal:
             raise EnrollmentNotReady("该教学班已有提交记录，须先核对官方结果")
         if len(data["attempts"]) + len(data["legacy_attempts"]) >= MAX_JOURNAL_ATTEMPTS:
             raise EnrollmentNotReady("本地提交记录达到上限，须人工核对")
+        if self.shared_intent_db is not None:
+            # Reuse the original shared SQLite implementation; no fifth
+            # engine and no migration of the existing Windows HMAC journal.
+            # If packaging cannot supply it, FAIL CLOSED before any POST.
+            root = Path(__file__).resolve().parents[4]
+            if not getattr(sys, "frozen", False) and str(root) not in sys.path:
+                sys.path.insert(0, str(root))
+            try:
+                from qiangke.qk.intent_journal import IntentJournal
+                reserved = IntentJournal(self.shared_intent_db).reserve(
+                    school=self.school_origin,
+                    account=self.verified_account_id,
+                    term=self.semester,
+                    course={"kch_id": target.course_id, "xkid": target.class_id},
+                )
+            except (ImportError, OSError, ValueError, sqlite3.Error):
+                raise EnrollmentNotReady("共享提交记录无法安全写入，禁止提交") from None
+            if not reserved:
+                raise EnrollmentNotReady("该课程已有其他执行器提交意图，禁止重复写入")
         data["attempts"][fingerprint] = "pending"
+        # A crash here leaves the shared reservation in place, not an unsafe
+        # gap that authorizes re-sending the same course.
         self._write(data)
 
     def _transition(self, target: Target, new_state: str) -> None:
@@ -421,6 +461,14 @@ class EnrollmentEngine:
         if (not isinstance(scope, str) or not scope.strip()
                 or scope != self.journal.account_scope):
             raise EnrollmentNotReady("当前官方账户与本地提交记录隔离范围不一致")
+        if getattr(self.journal, "shared_intent_db", None) is not None:
+            if (getattr(self.gateway, "verified_account_id", None)
+                    != self.journal.verified_account_id
+                    or getattr(self.gateway, "verified_school_origin", None)
+                    != self.journal.school_origin
+                    or getattr(self.gateway, "enrollment_semester", None)
+                    != self.journal.semester):
+                raise EnrollmentNotReady("共享意图记录的真实账号、学校或学期尚未核对")
         if not (self.user_opted_in is True and self.institution_permits_write is True
                 and all(getattr(self.gateway, name, False) is True for name in capabilities)):
             raise EnrollmentNotReady("用户授权、学校许可及目录/窗口/已选/写入接口验收必须全部通过")
