@@ -58,6 +58,7 @@ if (_root / "contracts" / "enrollment_evidence.py").is_file() and str(_root) not
 from contracts.enrollment_evidence import (
     VerificationState, normalized_official_rows, verify_selection,
 )
+from qiangke.qk.intent_journal import IntentJournal
 
 if os.name == "nt":
     import msvcrt
@@ -579,6 +580,14 @@ class Engine:
             cfg.get("budget", {}).get("burst", 5),
             cfg.get("budget", {}).get("retry_after_ms", 1000.0))
         self.journal = Journal(cfg.get("journal", {}).get("path", "kingo-intents.jsonl"))
+        # Existing JSONL state history stays intact. One shared SQLite fence is
+        # additionally used by Qiangke and NCWU before any physical write.
+        # Environment override is shared with those CLIs; a per-run test path
+        # is supported for local mock fixtures, never auto-created on read.
+        self.shared_intent_db = (
+            os.environ.get("KINGO_INTENT_DB")
+            or cfg.get("journal", {}).get("shared_intent_db")
+            or str(Path.home() / ".kingo-assistant" / "intent-journal.sqlite3"))
         self.records_path = Path(records_path)
         self._rec_lock = threading.Lock()
         self._intent_lock = threading.Lock()
@@ -907,8 +916,36 @@ class Engine:
             local_tr = self.transports[0]
             headers = {"Content-Type": "application/json; charset=UTF-8"} \
                 if sub.get("encoding", "form") == "json" else None
-            # Must survive a crash or lost response after the server commits.
-            self.journal.write("pending", offering, "before_send")
+            # Global course-level intent fence shared with qiangke/ and
+            # ncwu/. A duplicate or unwriteable fence means NO network write.
+            # The official response account and semester were independently
+            # checked in the preflight read above.
+            try:
+                reserved = IntentJournal(self.shared_intent_db).reserve(
+                    school=self.cfg["base_url"],
+                    account=self.cfg["account_scope"],
+                    term=self.cfg["xnxq"],
+                    course={"kch_id": offering.course_id, "xkid": offering.class_id},
+                )
+            except (OSError, ValueError, sqlite3.Error):
+                return Attempt(ts=time.time(), action="submit",
+                               course_id=offering.course_id,
+                               class_id=offering.class_id,
+                               reason="shared_intent_journal_unavailable")
+            if not reserved:
+                return Attempt(ts=time.time(), action="submit",
+                               course_id=offering.course_id,
+                               class_id=offering.class_id,
+                               reason="shared_intent_already_reserved")
+            # Legacy JSONL journal is retained for previous-state recovery;
+            # reservation occurs BEFORE any physical POST.
+            try:
+                self.journal.write("pending", offering, "before_send")
+            except (OSError, ValueError):
+                return Attempt(ts=time.time(), action="submit",
+                               course_id=offering.course_id,
+                               class_id=offering.class_id,
+                               reason="legacy_intent_journal_unavailable")
             sr = self._budgeted(local_tr, sub.get("method", "POST"),
                                 sub["path"], body=body, headers=headers,
                                 build_ms=build_ms)
@@ -958,7 +995,11 @@ class Engine:
             d = opt.Decision(winner.reason,
                              "wait" if winner.reason == "window_closed" else "next",
                              winner.reason)
-        elif winner.reason in ("readback_no_match", "readback_unavailable", "submission_unknown"):
+        elif winner.reason in (
+            "readback_no_match", "readback_unavailable", "submission_unknown",
+            "shared_intent_already_reserved", "shared_intent_journal_unavailable",
+            "legacy_intent_journal_unavailable",
+        ):
             d = opt.Decision("pending", "halt", winner.reason)
         return atts, d
 
