@@ -299,17 +299,22 @@ class ZfsoftAdapter(Adapter):
                 return GrabResult(False, UNKNOWN, "提交响应丢失，请在官方已选列表核验", course, 0, time.time() - t0)
 
             raw = r.text or ""
-            flag, msg = self._read_flag(raw)
-            code = self._classify(raw, flag, r.url)
-            # The endpoint may acknowledge even a nonexistent course. Neither
-            # generic success text nor an unrecognized response proves enrollment.
-            if code in (OK, ENROLLED, ERR) or not 200 <= r.status < 300:
-                code = UNKNOWN if code != AUTH else AUTH
-            res = GrabResult(False, code, msg or raw[:120],
-                             course, 0, time.time() - t0, raw[:400])
-            if code == AUTH:
+            flag, _ = self._read_flag(raw)
+            receipt_code = self._classify(raw, flag, r.url)
+            # HTTP and message flags cannot establish official enrollment.
+            # A write result has to be verified through a trusted readback,
+            # which is not currently connected to this adapter.
+            if receipt_code == AUTH:
                 self.logged_in = False
-            return res
+            if r.status == 429:
+                description = "服务端限制请求（HTTP 429）；停止重发并人工核验"
+            elif receipt_code == AUTH:
+                description = "服务端提示会话失效；提交结果未知，请人工核验"
+            else:
+                description = "提交回执并非官方已选证明；请核对已选课程，禁止自动重发"
+            # No raw response body or server-provided msg in a persisted result.
+            return GrabResult(False, UNKNOWN, description,
+                              course, 0, time.time() - t0)
 
     @staticmethod
     def _read_flag(raw: str):
