@@ -65,6 +65,11 @@ jobs:
           python test_fingerprint.py -v
           python test_phase2.py -v
           python test_hardening.py -v
+      - name: Ops canonical snapshots diagnostic (offline)
+        shell: bash
+        run: |
+          python -m ops.readonly_diagnostics --self-test
+          python -m unittest ops.test_readonly_diagnostics -v
       - name: Offline simulation and P5 matrix
         shell: bash
         working-directory: bench

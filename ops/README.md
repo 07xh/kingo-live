@@ -205,3 +205,12 @@ python fingerprint_bridge.py --cdp http://127.0.0.1:9222 \
 - `seat_events` ignores unknown/partial snapshots, does not manufacture a fresh release after an empty poll, and does not replace durable journals or the existing request budget.
 - `endpoints.run()` propagates explicit per-endpoint read-only headers; diagnostic public reports omit raw response values and request path values.
 - No live enrollment acceptance, signed-request replay, write integration or school-host test is implied by CI green.
+
+
+## 独立只读快照诊断入口（不接管执行器）
+
+`python -m ops.readonly_diagnostics --snapshot current.json --compare previous.json`
+
+仅接受仓库 `contracts/offering.py` 定义的标准 JSON 数组（例如 `ncwu/hs_kcbcx.py --standard-json`、`qiangke/run.py list --standard-json` 的离线导出）。从仓库根目录执行。输出来源、未知字段数量、课程与教学班身份匹配概况，以及两份快照中可解释的名额增加/减少事件数量。**不会读取 Cookie 或学号，不发送请求，不触发提交，不推断是否真正选课成功。** 默认不打印原始课程或教学班号。
+
+`python -m ops.readonly_diagnostics --self-test` 验证本地契约与事件转换。CI 在 Ubuntu/Windows 上运行相关测试。此工具不改变任何原有提交协议和 journal。
