@@ -747,7 +747,11 @@ class Engine:
                 and isinstance(account, str) and bool(account.strip())
                 and isinstance(term, str) and bool(term.strip())
                 and en.get("account_scope") == account
-                and en.get("semester") == term)
+                and en.get("semester") == term
+                and isinstance(en.get("response_account_path"), str)
+                and bool(en.get("response_account_path").strip())
+                and isinstance(en.get("response_semester_path"), str)
+                and bool(en.get("response_semester_path").strip()))
 
     def _official_records(self, r: RawResponse) -> frozenset[tuple[str, str]]:
         if not self._verified_readback_scope():
@@ -755,13 +759,20 @@ class Engine:
         if r.status != 200 or r.error:
             raise ValueError("官方已选课程接口未返回可验证数据")
         en = self.cfg["enrollment"]
+        # Never accept an operator-provided account/term assertion alone:
+        # extract BOTH identifiers from the same official JSON response.
+        if en.get("format", "json") != "json":
+            raise ValueError("HTML readback lacks verified identity binding")
         body = r.body.decode(en.get("encoding", "utf-8"), errors="replace")
-        if en.get("format", "json") == "json":
-            rows = dig(json.loads(body), en.get("json_list_path", ""))
-        else:
-            table = _TableParser()
-            table.feed(body)
-            rows = table.rows
+        raw = json.loads(body)
+        seen_account = dig(raw, en["response_account_path"])
+        seen_semester = dig(raw, en["response_semester_path"])
+        if (not isinstance(seen_account, str)
+                or not isinstance(seen_semester, str)
+                or seen_account != self.cfg["account_scope"]
+                or seen_semester != self.cfg["xnxq"]):
+            raise ValueError("官方响应账号或学期不匹配")
+        rows = dig(raw, en.get("json_list_path", ""))
         return normalized_official_rows(rows, en.get("columns") or {})
 
     def _readback(self, tr: Transport, offering: Offering) -> Tuple[bool, RawResponse]:
@@ -834,6 +845,22 @@ class Engine:
             a = Attempt(ts=time.time(), action="enroll", **base)
             a.reason = "pending_intent_needs_reconciliation"
             return [a], opt.Decision("pending", "halt", a.reason)
+        # Pre-submit official read proves this session/semester is bound to the
+        # expected enrolled-course list, not merely an HTTP 200 login page.
+        en = self.cfg["enrollment"]
+        pre = self._budgeted(tr, en.get("method", "GET"), en["path"])
+        try:
+            already_enrolled = self._official_records(pre)
+        except (KeyError, TypeError, ValueError, UnicodeError, IndexError):
+            a = Attempt(ts=time.time(), action="enroll", **base)
+            a.reason = "official_readback_scope_unavailable"
+            return [a], opt.Decision("unknown", "halt", a.reason)
+        if any(cid == base["course_id"] and
+               (not base["class_id"] or cls == base["class_id"])
+               for cid, cls in already_enrolled):
+            a = Attempt(ts=time.time(), action="enroll", **base)
+            a.reason, a.success = "already_enrolled_in_official_records", True
+            return [a], opt.Decision("confirmed", "stop", a.reason)
         r = self._budgeted(tr, cat.get("method", "GET"), cat["path"])
         a = Attempt(ts=time.time(), action="enroll", status=r.status,
                     error=r.error or "", **base)
