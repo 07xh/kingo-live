@@ -1151,4 +1151,12 @@ def main(argv: Optional[List[str]] = None) -> int:
 
 
 if __name__ == "__main__":
+    # Windows consoles default to cp1252/gbk; --probe prints raw catalog bodies
+    # that routinely contain Chinese course names. Force UTF-8 so a preview can
+    # never crash the CLI with UnicodeEncodeError.
+    for _stream in (sys.stdout, sys.stderr):
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, OSError, ValueError):
+            pass
     sys.exit(main())

@@ -29,7 +29,7 @@ def run(args):
     cmd = [sys.executable, str(HERE / "live_client.py")] + args
     print("\n$ " + " ".join(str(x) for x in cmd[1:]))
     p = subprocess.run(cmd, cwd=str(HERE), capture_output=True, text=True,
-                       timeout=60)
+                       encoding="utf-8", errors="replace", timeout=60)
     print(f"exit={p.returncode}")
     print(p.stdout.strip()[:2000])
     if p.stderr.strip():
@@ -130,4 +130,9 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    for _stream in (sys.stdout, sys.stderr):
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, OSError, ValueError):
+            pass
     sys.exit(main())
