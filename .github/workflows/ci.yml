@@ -64,6 +64,8 @@ jobs:
           python test_ops.py
           python test_fingerprint.py
           python test_phase2.py
+          # Phase 3 may arrive through a concurrent ops feature merge.
+          if [ -f test_phase3.py ]; then python test_phase3.py; fi
       - name: Offline simulation and P5 matrix
         shell: bash
         working-directory: bench
