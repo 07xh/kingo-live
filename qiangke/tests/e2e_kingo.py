@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""青果链路端到端：登录加密 → 会话 → 满员重试 → 抢到 → 多账号并发。
+"""青果安全回归：登录加密 → 会话 → 单次提交 → 待核验 → 多账号隔离。
 
   python tests/e2e_kingo.py     退出码 0 = 通过
 """
@@ -52,7 +52,9 @@ def build_cfg(base: str) -> dict:
 
 
 def main() -> int:
-    srv, port = kingo_mock.serve(0, full_first=0)
+    # Server returns 'full' for each first write; never replay a write to
+    # manufacture a success from a mock acknowledgement.
+    srv, port = kingo_mock.serve(0, full_first=2)
     base = f"http://127.0.0.1:{port}"
     log = qlog.build("e2e_kingo", os.path.join(tempfile.gettempdir(), "qk-kingo-e2e"))
     log.info(f"mock 青果启动 {base}")
@@ -77,8 +79,8 @@ def main() -> int:
         "登录加密通过服务端校验": st.crypto_ok,
         "两账号均登录": st.logins >= 2,
         "两门均待官方核验": len(ok) == 2,
-        "每个目标只发送一次": all(r["attempts"] == 1 for r in ok),
-        "每账户仅一次提交": st.grab_calls == 2,
+        "每门课程最多一次物理提交": all(r["attempts"] == 1 for r in ok),
+        "无重试式提交": st.grab_calls == 2,
         "两账号分别保留待核验": accounts_ok == 2,
         "解密出的params含用户名": "MjAyMz" in st.last_params or "_u" in st.last_params,
     }
