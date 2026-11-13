@@ -11,7 +11,7 @@ from core.kingo_live_bridge import MAX_HAR_BYTES, classify_har
 
 class KingoLiveBridgeTests(unittest.TestCase):
     def test_synthetic_capture_produces_only_aggregate_counts(self):
-        fixture = (Path(__file__).resolve().parents[3]
+        fixture = (Path(__file__).resolve().parents[4]
                    / "kingo-live" / "capture.example.har")
         result = classify_har(fixture)
         self.assertGreater(result["api_entries"], 0)

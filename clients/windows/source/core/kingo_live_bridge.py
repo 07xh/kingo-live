@@ -19,7 +19,7 @@ def _parser():
     if hasattr(sys, "_MEIPASS"):
         path = Path(sys._MEIPASS) / "har_to_schema.py"
     else:
-        path = Path(__file__).resolve().parents[3] / "kingo-live" / "har_to_schema.py"
+        path = Path(__file__).resolve().parents[4] / "kingo-live" / "har_to_schema.py"
     if not path.is_file():
         raise ValueError("离线分析组件缺失")
     name = "_kingo_live_shared_har_parser"
