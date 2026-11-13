@@ -3,6 +3,8 @@
 No access control can be bypassed by this configuration.  When a school-specific
 minimum is unknown, default to one catalog read per 60 seconds at most.  A
 manual policy declaration is not independent proof of institutional permission.
+A two-second interval is a configurable floor only with explicitly verified
+institutional policy and an independently enforced shared request budget.
 """
 from __future__ import annotations
 
@@ -10,7 +12,7 @@ from dataclasses import dataclass
 import math
 
 DEFAULT_MIN_INTERVAL = 60.0
-ABSOLUTE_MIN_INTERVAL = 30.0
+ABSOLUTE_MIN_INTERVAL = 2.0
 MAX_INTERVAL = 3600.0
 MAX_DURATION_MINUTES = 1440
 MAX_CYCLES = 10_000
@@ -55,7 +57,7 @@ def validate_limits(strategy: dict) -> MonitorLimits:
         if not math.isfinite(approved):
             raise ValueError("学校最低间隔必须是有效数字")
         if not ABSOLUTE_MIN_INTERVAL <= approved <= MAX_INTERVAL:
-            raise ValueError("官方允许的最低间隔必须在 30 至 3600 秒范围内")
+            raise ValueError("官方允许的最低间隔必须在 2 至 3600 秒范围内")
         minimum = approved
     elif policy:  # A partial declaration is not proof of a lower safe interval.
         if policy.get("manually_confirmed") not in (False, None):
