@@ -54,6 +54,69 @@ class IntentHTTPTests(selftest.LiveHTTPTests):
                 finally:
                     eng.close()
 
+    def test_qiangke_ncwu_shared_intent_prevents_kingo_live_post(self):
+        """The existing qiangke/ and ncwu/ SQLite gate is reused, not cloned."""
+        cfg = self.cfg()
+        self.assertTrue(lc.IntentJournal(cfg["journal"]["shared_intent_db"]).reserve(
+            school=cfg["base_url"], account=cfg["account_scope"],
+            term=cfg["xnxq"], course={"kch_id": "C001", "xkid": "T02"}))
+        engine = lc.Engine(cfg, self.rec("_other_engine"))
+        try:
+            result = engine.enroll(confirm=True)
+            self.assertEqual(result[0].reason, "shared_intent_already_reserved")
+            self.assertFalse(result[0].success)
+            self.assertEqual(self.state.submit_count, 0)
+            self.assertEqual(engine.journal.pending_fingerprints(), set())
+        finally:
+            engine.close()
+
+    def test_shared_intent_db_failure_is_fail_closed(self):
+        cfg = self.cfg()
+        engine = lc.Engine(cfg, self.rec("_failed_db"))
+        try:
+            with patch("live_client.IntentJournal",
+                       side_effect=OSError("synthetic disk failure")):
+                result = engine.enroll(confirm=True)
+            self.assertEqual(result[0].reason, "shared_intent_journal_unavailable")
+            self.assertFalse(result[0].success)
+            self.assertEqual(self.state.submit_count, 0)
+            self.assertEqual(engine.journal.pending_fingerprints(), set())
+        finally:
+            engine.close()
+
+    def test_shared_intent_reservation_occurs_before_real_http(self):
+        cfg = self.cfg()
+        engine = lc.Engine(cfg, self.rec("_shared_before_send"))
+        original = engine._budgeted
+        fired = []
+        def inspect_send(tr, method, path, **kwargs):
+            if path == "/submit":
+                fired.append(True)
+                self.assertFalse(lc.IntentJournal(
+                    engine.shared_intent_db).reserve(
+                        school=cfg["base_url"], account=cfg["account_scope"],
+                        term=cfg["xnxq"],
+                        course={"kch_id": "C001", "xkid": "T01"}))
+                return lc.RawResponse(status=0, headers={}, body=b"",
+                                      error="lost response")
+            return original(tr, method, path, **kwargs)
+        try:
+            with patch.object(engine, "_budgeted", side_effect=inspect_send):
+                result = engine.enroll(confirm=True)
+            self.assertEqual(len(fired), 1)
+            self.assertEqual(self.state.submit_count, 0)
+            self.assertEqual(result[0].reason, "submission_unknown")
+            restarted = lc.Engine(cfg, self.rec("_shared_restart"))
+            try:
+                again = restarted.enroll(confirm=True)
+                self.assertEqual(again[0].reason,
+                                 "pending_intent_needs_reconciliation")
+                self.assertEqual(self.state.submit_count, 0)
+            finally:
+                restarted.close()
+        finally:
+            engine.close()
+
     def test_stale_confirmed_journal_never_claims_success(self):
         cfg = self.cfg()
         engine = lc.Engine(cfg, self.rec("_stale"))
