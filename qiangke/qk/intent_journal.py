@@ -66,7 +66,11 @@ class IntentJournal:
         # Some legacy read-only NCWU adapters cannot determine a teaching
         # class. Conservatively fence the *whole course* in that case.
         # Qiangke's write engine additionally requires an explicit class ID.
-        target = ("class", class_id) if class_id else ("course", course_code)
+        # When an authoritative course code exists, reserve the whole course.
+        # NCWU's standalone submission payload chooses by course code, not by
+        # its optional teaching-class hint; a different hint must never
+        # authorize a second physical write.
+        target = ("course", course_code) if course_code else ("class", class_id)
         if not target[1] or target[1].lower() in ("unknown", "none", "-"):
             raise ValueError("缺少稳定的课程代码或教学班号")
         # Do not include cosmetic display name / teacher in this identity.
@@ -81,11 +85,31 @@ class IntentJournal:
         threads unable to acquire the same enrollment intent twice.
         """
         fp = self._fingerprint(school=school, account=account, term=term, course=course)
+        # Previous revisions wrote exact teaching-class fingerprints. Check
+        # them under the same lock before using the canonical course key,
+        # so upgrading cannot silently replay an already-sent POST.
+        prior_class_fp = fp
+        code = str(course.get("kch_id") or course.get("kcdm") or "").strip()
+        class_id = str(course.get("xkid") or course.get("jxb_ids") or "").strip()
+        if code and class_id and class_id.lower() not in ("none", "null", "unknown", "-"):
+            legacy_identity = json.dumps([
+                (urlsplit(school).netloc or school).strip().lower(),
+                account.strip(), term.strip(), "class", class_id,
+            ], ensure_ascii=False, separators=(",", ":"))
+            prior_class_fp = hmac.new(
+                self.salt, legacy_identity.encode("utf-8"),
+                hashlib.sha256).hexdigest()
         with closing(sqlite3.connect(self.path, timeout=15, isolation_level=None)) as db:
             db.execute("BEGIN IMMEDIATE")
             try:
+                row = db.execute(
+                    "SELECT 1 FROM attempts WHERE fingerprint IN (?, ?) LIMIT 1",
+                    (fp, prior_class_fp)).fetchone()
+                if row:
+                    db.commit()
+                    return False
                 cursor = db.execute(
-                    "INSERT OR IGNORE INTO attempts (fingerprint, state) VALUES (?, 'pending')",
+                    "INSERT INTO attempts (fingerprint, state) VALUES (?, 'pending')",
                     (fp,))
                 db.commit()
                 return cursor.rowcount == 1
