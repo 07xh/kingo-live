@@ -274,6 +274,11 @@ class OptimizationTests(unittest.TestCase):
         self.assertEqual(self.state.submit_count, 1)
 
         self.state.readback_status = 200
+        # A previous 503 imposed a server-protective cooldown. A recovery
+        # read must not bypass it even when the test server recovers.
+        blocked_recovery = eng.reconcile()
+        self.assertEqual(blocked_recovery.get("error"), "budget:retry_after")
+        time.sleep(eng.budget.retry_after_ms / 1000.0 + 0.1)
         rep = eng.reconcile()
         self.assertEqual(rep["pending_before"], 1)
         self.assertEqual(rep["resolved"], 1)
@@ -292,6 +297,9 @@ class OptimizationTests(unittest.TestCase):
         self.assertEqual(len(eng.journal.pending_fingerprints()), 1)
 
         self.state.readback_status = 200
+        blocked_recovery = eng.reconcile()
+        self.assertEqual(blocked_recovery.get("error"), "budget:retry_after")
+        time.sleep(eng.budget.retry_after_ms / 1000.0 + 0.1)
         rep = eng.reconcile()
         self.assertEqual(rep["confirmed"], 0)
         self.assertEqual(rep["rejected"], 0)
