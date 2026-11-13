@@ -17,7 +17,7 @@ import re
 import time
 from urllib.parse import urlparse
 
-from ..net import NetError, Session
+from ..net import NetError
 from ..rsa_crypt import encrypt, parse_keys
 from .base import AUTH, CONFLICT, ENROLLED, ERR, FULL, OK, Adapter, GrabResult
 
@@ -60,14 +60,7 @@ class ZfsoftAdapter(Adapter):
         return self.paths[key]
 
     def open(self) -> None:
-        self.session = Session(
-            base_url=self.base_url,
-            timeout=float(self.cfg.get("timeout", 8)),
-            retries=int(self.cfg.get("retries", 1)),
-            headers=self.cfg.get("headers") or {},
-            verify_tls=bool(self.cfg.get("verify_tls", False)),
-            logger=self.log,
-        )
+        self.session = self.make_session(self.base_url)
         t0 = time.time()
         try:
             self.session.get("/", timeout=8)
