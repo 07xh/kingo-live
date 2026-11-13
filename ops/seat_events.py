@@ -134,7 +134,9 @@ class AdaptivePoller:
         if self.state == "halt":
             return 0.0
         if self.penalty_ms > 0.0:
-            v = min(self.penalty_ms, self.maximum)
+            # A server Retry-After may exceed the local nominal poll maximum.
+            # Never shorten a mandatory cooldown to the display interval cap.
+            v = self.penalty_ms
             self.penalty_ms = 0.0
             self._move("idle", "penalty_served")
             return v
@@ -295,7 +297,9 @@ class IntentGate:
 
     def reconcile(self, target: dict, official_hit: bool) -> str:
         k = self.key(target)
-        state = "confirmed" if official_hit else "rejected"
+        # An absent or delayed readback is NOT proof that a write failed.
+        # Retain pending unless an explicit exact official positive is found.
+        state = "confirmed" if official_hit else "pending"
         self.states[k] = state
         self.history.append({"key": k, "event": state, "at": time.time()})
         return state
