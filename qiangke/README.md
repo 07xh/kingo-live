@@ -5,6 +5,12 @@
 
 零第三方依赖，Python 3.8+ 直接跑。
 
+**连接安全：** 正式教务站点必须使用 HTTPS 且验证服务器证书（system.verify_tls: true）。
+本机 mock（localhost / 127.0.0.1 / ::1）可用于离线测试；非本机禁止使用明文 HTTP 或关闭 TLS 验证。
+如果原来本地配置为 verify_tls: false，请改为 true；证书异常时修复系统信任链，而不是绕过校验。
+测试仅使用虚构账号；不要提交真实 HAR、学号、密码或 Cookie。
+
+
 ## 快速开始
 
 ```bash
@@ -169,7 +175,7 @@ WARNING 选课窗口未开放：当前时间不是有效的选课时间区段！
 ```json
 "accounts": [
   {"name": "我",   "user": "2026xxxxxx", "pass": "密码1", "courses": [{"name": "篮球"}]},
-  {"name": "室友", "user": "202611015", "pass": "密码2", "courses": [{"name": "足球"}]}
+  {"name": "室友", "user": "2026xxxxxx", "pass": "密码2", "courses": [{"name": "足球"}]}
 ]
 ```
 
@@ -214,11 +220,12 @@ WARNING 选课窗口未开放：当前时间不是有效的选课时间区段！
 
 ```bash
 python tests/test_xk.py        # 23 项：DataTable 解析 / 空表 / 退化字段 / items 格式
-python tests/test_pwd.py       # 8 项：双 MD5 与真机 HAR 逐字节一致
+python tests/test_pwd.py       # 8 项：双 MD5 与虚构黄金向量一致
 python tests/e2e_kingo.py      # 7 项：双账号并发 → 满员重试 → 全抢到
 python tests/test_guard.py     # 16 项：占位符拦截 / 402 熔断
 python tests/test_auto.py      # 5 项：课程匹配 + 回写 + 不误配
 python tests/e2e.py            # 7 项：正方适配器没退化
+python tests/test_tls.py       # 8 项：TLS 校验 / 禁用远程明文 / 本机 mock
 ```
 
 ## 已知坑
