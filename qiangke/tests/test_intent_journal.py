@@ -1,4 +1,5 @@
 """SQLite intent fence must protect against restart and simultaneous workers."""
+from contextlib import closing
 import os
 import sys
 import tempfile
@@ -94,7 +95,9 @@ class JournalTests(unittest.TestCase):
                                   separators=(",", ":"))
             legacy_fp = hmac.new(store.salt, identity.encode("utf-8"),
                                  hashlib.sha256).hexdigest()
-            with sqlite3.connect(store.path) as db:
+            # sqlite3.Connection.__exit__ commits but does NOT close the
+            # handle; Windows refuses to delete an open test database.
+            with closing(sqlite3.connect(store.path)) as db, db:
                 db.execute("INSERT INTO attempts (fingerprint, state) VALUES (?, ?)",
                            (legacy_fp, "pending"))
             self.assertFalse(store.reserve(school="https://example.invalid",
