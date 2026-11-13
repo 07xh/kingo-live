@@ -107,3 +107,35 @@ uses the shared read-only model and optionally exports only validated course
 fields. Windows **离线工具 → 查看规范化课程 JSON（非实时）** reads that
 local file with the same contract validator, without HTTP, credentials, or
 altering course plans. The historic CSV viewer remains available.
+
+## ops/ — read-only recon and fingerprint modules (2026-11-14)
+
+Additive modules only. The four existing implementations
+(`clients/windows/source/`, `kingo-live/`, `qiangke/`, `ncwu/`) and every
+document above are untouched.
+
+| Path | What it is |
+|---|---|
+| `ops/recon.py` | Five read-only GET probes: backend nodes, ALPN / clock / `Server-Timing` / rate headers, N-sample clock phase, path variants, window-gate ownership |
+| `ops/seat_events.py` | Adaptive 60s -> 2s polling, snapshot-diff release events, dynamic target ranking, single-physical-submit gate |
+| `ops/p5_probe.py` | Spearman-based allocation rule (`fcfs` / `random` / `priority`) and rate-limit dimension (`ip` / `session` / `account` / `node`) inference, then concrete strategy values |
+| `ops/fingerprint.py` | Redacted HAR baseline, exact ordered-header replay, ClientHello -> JA3, ordered diff and gate verdict (#14) |
+| `ops/fingerprint_bridge.py` | CDP real-browser channel (stdlib-only WebSocket client) plus a mitmproxy addon (#14) |
+| `ops/test_ops.py`, `ops/test_fingerprint.py` | Loopback regressions: 65/65 and 113/113 |
+| `tools/push_ops.py` | Portable REST incremental sync for `ops/`; see `tools/README.md` |
+
+Invariants: read-only by default (any non-GET method requires an explicit
+`allow_write=True`), credentials only from the environment, `HTTP 200 !=
+enrollment success`, one physical submit per target, and `pending` resolved
+only against the official selected-course list. The `catalog` / `submit` /
+`enrollment` contracts remain `TARGET_*` placeholders until real HAR evidence
+is available.
+
+Commits: `4172a4d` (recon + event strategy + P5 probes), `2a59742` (#14
+fingerprint alignment and browser bridge), plus the two commits that add the
+portable sync tool and this section.
+
+Verification: remote blob SHA1s match local files byte-for-byte, and both
+regressions were rerun from code downloaded from the remote. No school host,
+live TLS handshake, real Chrome session, or signed POST was exercised; all
+113 fingerprint checks run against a loopback target.
