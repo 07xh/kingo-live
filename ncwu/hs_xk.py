@@ -284,7 +284,7 @@ def judge(raw):
     plain = _txt(txt)
     verdict = pending_receipt()
     assert verdict.state is VerificationState.PENDING
-    print(c("90", f"已接收接口响应 {len(raw)}B；正文已隐藏；当前结果={verdict.state.value}，待官方逐课程核验"))
+    print(c("90", f"已接收接口响应 {len(raw)}B；响应正文已隐藏；当前结果={verdict.state.value}，待官方逐课程核验"))
     ok = ["选课成功", "成功", "保存成功"]
     full = ["人数已满", "容量已满", "已满", "超过限选"]
     dup = ["已经选", "已选过", "重复", "不能重复"]
