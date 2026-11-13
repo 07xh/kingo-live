@@ -93,7 +93,8 @@ class LabHandler(BaseHTTPRequestHandler):
                 return
             with self.state.lock:
                 rows = [] if self.state.empty_readback else list(self.state.enrolled)
-            self._send(200, {"data": {"rows": rows}})
+            self._send(200, {"data": {"rows": rows, "account_scope": "fictional-test-account",
+                                     "semester": "2026-2027-1"}})
             return
         self._send(404, {"error": "not_found"})
 
@@ -152,7 +153,9 @@ class OptimizationTests(unittest.TestCase):
         c["account_scope"] = "fictional-test-account"
         c["enrollment"].update({"official_verified": True,
                                 "account_scope": c["account_scope"],
-                                "semester": c["xnxq"]})
+                                "semester": c["xnxq"],
+                                "response_account_path": "data.account_scope",
+                                "response_semester_path": "data.semester"})
         c["clock"]["path"] = "/catalog"
         c["clock"]["samples"] = samples
         c["clock"]["header"] = clock_header
