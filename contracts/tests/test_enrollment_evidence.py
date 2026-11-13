@@ -31,10 +31,10 @@ class EvidenceTests(unittest.TestCase):
         for k in (dict(official_verified=False),
                   dict(observed_account="different"),
                   dict(observed_semester="different"),
-                  dict(expected_account=""),
-                  dict(records=[("C01", "T01")])):
+                  dict(expected_account="")):
             with self.subTest(k=k):
                 self.assertEqual(self.verdict(record, **k), VerificationState.UNAVAILABLE)
+        self.assertEqual(self.verdict([("C01", "T01")]), VerificationState.UNAVAILABLE)
 
     def test_count_message_and_catalog_never_count_as_evidence(self):
         for raw in ({"yxms": 1}, "操作成功", [("C01", "T01")], None):
