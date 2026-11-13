@@ -281,7 +281,7 @@ def judge(raw):
         return
     txt = raw.decode("gb18030", "replace")
     plain = _txt(txt)
-    print(c("90", f"响应 {len(raw)}B：{plain[:300]}"))
+    print(c("90", f"已接收接口响应 {len(raw)}B；响应正文已隐藏，结果待官方逐课程核验"))
     ok = ["选课成功", "成功", "保存成功"]
     full = ["人数已满", "容量已满", "已满", "超过限选"]
     dup = ["已经选", "已选过", "重复", "不能重复"]
@@ -296,13 +296,13 @@ def judge(raw):
             return
     for kw in dup:
         if kw in plain:
-            print(c("33", f"→ 判定：已选过（命中「{kw}」）"))
+            print(c("33", "→ 接口提示可能已选过；须以官方已选课程明细为准"))
             return
     for kw in closed:
         if kw in plain:
             print(c("31", f"→ 判定：门外（命中「{kw}」）"))
             return
-    print(c("33", "→ 判定：未知，人工看响应原文"))
+    print(c("33", "→ 结果未知，请在官方已选课程列表核对；不回显服务器响应正文"))
 
 
 # ─────────────────────────── CLI ───────────────────────────
