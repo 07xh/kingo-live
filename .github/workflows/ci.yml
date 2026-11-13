@@ -27,6 +27,9 @@ jobs:
       - name: Compile
         shell: bash
         run: python -m py_compile kingo-live/*.py bench/*.py ncwu/*.py
+      - name: Course-plan parser regressions (offline)
+        shell: bash
+        run: python -m unittest discover -s ncwu/tests -q
       - name: Real loopback HTTP end-to-end
         shell: bash
         working-directory: kingo-live

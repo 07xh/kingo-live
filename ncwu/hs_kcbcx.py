@@ -171,8 +171,9 @@ def parse_plan(html):
 
         d["cap"] = _int(d.get("xkrssx", ""))      # 限选人数
         d["left"] = _int(d.get("qdrs", ""))       # 可选人数（服务端算好的）
-        if d["left"] is None and d["cap"] is not None and d["taken"] is not None:
-            d["left"] = d["cap"] - d["taken"]
+        # Never synthesize qdrs from capacity - enrolled: the server's
+        # available-seat number can legitimately disagree with that subtraction.
+        # A missing qdrs must remain unknown, not falsely full/open.
         d["skbjdm"] = d.get("curent_skbjdm") or d.get("skbjdm", "")
         rows.append(d)
     return rows, total
