@@ -54,6 +54,12 @@ import sys
 import time
 import urllib.parse
 import urllib.request
+import sqlite3
+from pathlib import Path
+
+# Share the same durable per-intent guard with the Qiangke CLI.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from qiangke.qk.intent_journal import IntentJournal
 
 BASE = "https://jwmis.ncwu.edu.cn/hsjw/"
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -366,9 +372,26 @@ def main():
         # items 格式：kcdm,js,tj,checked|
         items = f"{args.kcdm},{args.js},{args.tj},true|"
         print(c("36", f"[提交] kcdm={args.kcdm} skbjdm={args.skbjdm or '-'} items={items}"))
-        # Exactly one physical write per explicit CLI invocation.
-        # A lost response must be checked on the official enrollment page,
-        # never replayed automatically because the first request may have landed.
+        # Reserve in the same crash-safe journal used by the Qiangke CLI.
+        # Dry runs cannot claim an intent because no school write is sent.
+        if not args.dry_run:
+            if not all(str(form.get(key) or "").strip() for key in ("xh", "xn", "xq")):
+                sys.exit("缺少官方账号或学期字段，禁止发送选课提交。")
+            journal_path = (os.environ.get("KINGO_INTENT_DB")
+                            or Path.home() / ".kingo-assistant" / "intent-journal.sqlite3")
+            try:
+                journal = IntentJournal(journal_path)
+                reserved = journal.reserve(
+                    school="https://jwmis.ncwu.edu.cn",
+                    account=str(form["xh"]), term=f"{form['xn']}-{form['xq']}",
+                    course={"kch_id": str(args.kcdm), "xkid": str(args.skbjdm)},
+                )
+            except (OSError, ValueError, sqlite3.Error) as exc:
+                sys.exit(f"持久化提交保护失败，未发送请求：{type(exc).__name__}")
+            if not reserved:
+                sys.exit("相同账户、学期和目标存在历史提交意图，已停止重发；请核对官方已选记录。")
+        # The intent is persisted BEFORE the only physical write; lost responses
+        # remain unknown and are never automatically replayed.
         raw = submit(ck, form, items, dry_run=args.dry_run)
         judge(raw)
         return
