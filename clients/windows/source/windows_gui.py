@@ -1013,11 +1013,11 @@ class Application(tk.Tk):
                     self.log("Kingo Live 只读 HAR 交叉核验完成；不启用学校读写适配器。")
                     messagebox.showinfo(
                         "Kingo Live · 本机 HAR 交叉核验",
-                        f"有效请求条目：{result['api_entries']}\\n"
-                        f"可选课目录候选：{result['catalog_candidates']}\\n"
-                        f"已选课程列表候选：{result['enrollment_candidates']}\\n"
-                        f"排除的课表响应：{result['excluded_timetables']}\\n"
-                        f"选课窗口关闭线索：{result['closed_window_signals']}\\n\\n"
+                        f"有效请求条目：{result['api_entries']}\n"
+                        f"可选课目录候选：{result['catalog_candidates']}\n"
+                        f"已选课程列表候选：{result['enrollment_candidates']}\n"
+                        f"排除的课表响应：{result['excluded_timetables']}\n"
+                        f"选课窗口关闭线索：{result['closed_window_signals']}\n\n"
                         "结果仅用于人工复核；并不证明任何接口已获授权，"
                         "不包含真实名额核验，也不会启用自动提交。"
                     )
