@@ -45,6 +45,14 @@ class HsXkSafetyTests(unittest.TestCase):
         self.assertIn("尚未按官方已选课程逐项核验", out.getvalue())
         self.assertNotIn("判定：成功", out.getvalue())
 
+    def test_unknown_server_response_is_not_echoed(self):
+        marker = "PRIVATE_RESPONSE_SENTINEL"
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            hs_xk.judge(('{"message":"' + marker + '"}').encode("gb18030"))
+        self.assertNotIn(marker, out.getvalue())
+        self.assertIn("响应正文已隐藏", out.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()
