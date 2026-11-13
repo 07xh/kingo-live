@@ -1,6 +1,6 @@
-# ops/ — 只读侦察 + 事件驱动 + 规则判定 + 指纹一致性 + 端点/预检/核验
+# ops/ — 只读侦察 + 事件驱动 + 规则判定 + 指纹一致性 + 端点/预检/核验 + 编排层
 
-九个独立模块，**不改动** `clients/windows/source/`、`kingo-live/`、`qiangke/`、`ncwu/` 四套现有实现。零第三方依赖，Python 3.10+，标准库。
+十二个独立模块，**不改动** `clients/windows/source/`、`kingo-live/`、`qiangke/`、`ncwu/` 四套现有实现。零第三方依赖，Python 3.10+，标准库。
 
 **不变式（全部模块）**：默认只读；单目标一次物理提交；`HTTP 200 ≠ 成功`；未知结果写 `pending` 走官方回查；凭据只从 `KINGO_COOKIE` 注入，报告里不出现值。
 
@@ -15,7 +15,10 @@
 | `preflight.py` | 一次性票据池、body 预序列化、连接分片与 TLS 会话计划、QPC 高精度等待与绑核 | #7 #8 #9 |
 | `crosscheck.py` | 已选名单 / wap 课表 / 学分 / `zxxq` 四通道加权融合，避免把真成功读成 `pending` | #13 |
 | `signature.py` | 移动端签名通道的 jadx/smali 构造点定位 + Frida 钩点模板（只改 `kcid`/`skbj`，不碰签名） | #5 |
-| `test_ops.py` / `test_fingerprint.py` / `test_phase2.py` | 65 + 113 + 182 项离线回归 | 验证 |
+| `orchestrator.py` | 六阶段流水线（recon→plan→arm→watch→act→verify）：把上面全部模块串成一条显式状态机 | 编排 |
+| `adapter.py` | 配置桥：`kcid`/`skbj`/`jxbh`/`courseId`/`vol` 等真实字段别名 → ops 契约；身份缺失直接报错，不发空心目标 | 对接 |
+| `race_probe.py` | #11 原子性探测：classify() 纯函数判定服务端锁行为；RaceProbe 默认**未武装**，显式 `armed=True` 才可控多发（上限 4） | #11 |
+| `test_ops.py` / `test_fingerprint.py` / `test_phase2.py` / `test_phase3.py` | 65 + 113 + 182 + 32 项离线回归 | 验证 |
 
 ## 跑起来
 
@@ -24,6 +27,10 @@ cd ops
 python test_ops.py -v                 # 65/65 OK
 python test_fingerprint.py -v         # 113/113 OK
 python test_phase2.py                 # 182/182 OK（含回环 HTTP 靶标）
+python test_phase3.py                 # 32/32 OK（编排器 + 配置桥 + 原子性探测）
+python orchestrator.py                # 六阶段流水线端到端演示（monitor-only）
+python adapter.py                     # kcid/skbj 别名映射演示
+python race_probe.py                  # 四种服务端锁行为的判定示例
 python p5_probe.py                    # 打印规则判定示例
 python seat_events.py                 # quiet -> submit -> duplicate blocked
 python fingerprint.py --demo          # 差异判定 + 门槛判定示例
@@ -193,5 +200,58 @@ python fingerprint_bridge.py --cdp http://127.0.0.1:9222 \
 
 - 四个新模块全部**纯离线**：`endpoints.py` 的实机探测需显式 `--host`，且只发 GET；`signature.py` 只做静态扫描，不执行 Frida、不发请求、不还原签名算法；`crosscheck.py` 不发网络请求。
 - `test_phase2.py` 的 182 项含一个真实回环 HTTP 靶标（16 端点、3 种响应形状），验证聚类、限流头、窗口标记与推荐；**没有**连学校主机、没有真 APK、没有真 Chrome、没有真 TLS 握手。
-- `#10`（同网段物理位次）、`#11`（条件竞争超发）**刻意未实现**：#10 是部署动作不是代码；#11 破坏意图幂等、高方差，只在确认服务端无事务锁后单独评估。
+- `#10`（同网段物理位次）是部署动作不是代码；`#11` 以**受控探测**形式落地：`race_probe.RaceProbe` 默认未武装，不发任何请求；显式 `armed=True` 后最多 4 发，且 intent 先落 `pending`、结果必须回官方名单对账。判定服务端有锁（`unique_constraint`/`transaction_lock`）时维持单发不变式。
 - 所有真实端点、轮次参数、类名方法名、票据名仍为 `TARGET_*`；拿到 HAR / APK 后按 `config.example.json` 回填，判据不变。
+
+## 第三轮：编排层 + 配置桥 + #11 原子性探测
+
+### orchestrator.py — 六阶段流水线
+
+```
+recon ──> plan ──> arm ──> [ watch ⇄ act ⇄ verify ]   （武装后循环）
+```
+
+| 阶段 | 动作 | 读/写 |
+|---|---|---|
+| recon | `recon_probe()` 端点矩阵，只发 GET/HEAD/OPTIONS | 只读 |
+| plan | `plan_with(recon, endpoints, p5)` 纯函数：折叠通道推荐、窗口归属、P5 规则、节点数 → 具体 Plan | 纯计算 |
+| arm | `arm(prebuilt)` 票据池 + body 预序列化 + 连接分片 + QPC 时钟，零网络 | 本地 |
+| watch | `watch(response, parse)` 单次目录轮询走 EventDriver，产出显式 Decision | 只读 |
+| act | `act(decision)` **不持有 socket**：把单发指令交给调用方 executor 回调；无回调 = monitor-only，intent 落 pending | 受控 |
+| verify | `verify(evidence)` 四通道融合对账，滞后读只降权不否定 | 只读 |
+
+约束实现（不是注释）：`Phase` 前向推进表 + 武装簇互认；executor 异常写 `pending` 绝不重发；`_executed` 集合防 Decision 重放二次触发；mission.public() 脱敏。
+
+### adapter.py — 与四套现有执行器对接
+
+- `normalize_target()`：`kcid/skbj/jxbh/courseId/vol/xnxq` 等真实字段别名 → `{course_id, class_id, priority}`；**缺身份直接 ValueError**，priority 越界报错，首别名优先不静默覆盖。
+- `load_targets()`：接受 JSON 字符串 / 文件路径 / list，识别 `targets/courses/目标课程/course_list` 包裹键。
+- `load_mission()`：`jw_host/baseUrl/查询间隔/账号数` → Mission kwargs，间隔钳制 1s–1h，未知键进 `unknown_keys` 由调用方决定，**绝不静默丢弃**。
+- `export_targets()`：反向导出 kcid/skbj 形态供旧执行器消费。
+
+### race_probe.py — #11 判定服务端原子性
+
+| 服务端行为 | 判定信号 | 结论 |
+|---|---|---|
+| 唯一约束 | 官方名单 1 条命中 + 多个 200 无重复标记，或 sibling 答「已选该课程」 | 并发无意义，维持单发 |
+| 事务锁 | lock/busy 标记、官方名单 0/1 条且 sibling 失败 | 并发无意义 |
+| check-then-act | 官方名单同身份 ≥2 条命中，或 sibling 答「人数已满」（双双过检） | 可并发，但高方差 |
+| 未知 | 只有响应、名单不可读 | 需名单证据，confidence ≤0.3 |
+
+`RaceProbe.run()` 守卫链：executor 必须挂载 → `armed=True` 显式传入 → IntentGate 先落 pending → shots 钳制 1–4 → 每发记录 status/body/latency → `classify()` 判定 → `reconcile_extra()` 官方名单对账。**判定有锁时，ops 其余全部模块的单发不变式不变。**
+
+### 数值
+
+| 参数 | 主值（范围） | 依据 |
+|---|---|---|
+| `Mission.poll_interval_hot_ms` | 2000（500–60000），monitor-only 下限强制 ≥2000 | 事件窗响应；无执行器时不给服务端加压 |
+| `RaceProbe.shots` | 2（1–4，硬上限 4） | 判定原子性最少 2 发；超过 4 发在无锁场景会造成多余选课记录 |
+| `adapter.priority` | 1–99 | 志愿位次工程界惯例，越界即配置错误 |
+| `poll_interval_base_ms` 钳制 | 1000–3600000 ms | 1s 内轮询属攻击行为；1h 以上失去监测意义 |
+| race verdict confidence | 官方名单 ≥0.7；仅响应 ≤0.3 | 名单是唯一 ground truth |
+
+### 验证判据
+
+- `test_phase3.py` **32/32**：阶段机前向/武装簇、P5 折叠、monitor-only 钳制、单发/重放阻断、executor 异常落 pending、#11 四类判定、disarmed 不发弹、shots 硬上限、**真实回环 HTTP 端到端**（模拟目录 0→3 余量 → submit Decision → 单次执行 → 对账）。
+- 全量：65 + 113 + 182 + 32 = **392 项 OK**，三个演示脚本可独立运行，`import ops` v2.1.0 / 12 模块。
+- 实机缺口不变：无学校主机、无真 HAR/APK；`Mission.host`、`catalog_path` 仍为 `TARGET_*`。

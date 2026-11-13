@@ -99,6 +99,29 @@
     "direct_api": false,
     "single_physical_submit": true
   },
+  "orchestrator": {
+    "mission": {
+      "host": "TARGET_HOST",
+      "poll_interval_base_ms": 60000.0,
+      "poll_interval_hot_ms": 2000.0,
+      "hot_rounds": 10,
+      "sessions": 1,
+      "respect_retry_after": true,
+      "catalog_path": "/hsjw//wap/mycourseschedule.action"
+    },
+    "note": "executor is code, not config: attach a callback or run monitor-only"
+  },
+  "adapter": {
+    "aliases": {"kcid": "course_id", "skbj": "class_id", "jxbh": "class_id",
+                "courseId": "course_id", "vol": "priority"},
+    "note": "load_mission() accepts qiangke/ncwu-style configs; unknown keys are reported, never dropped"
+  },
+  "race_probe": {
+    "armed": false,
+    "shots": 2,
+    "hard_cap": 4,
+    "note": "#11: fire N identical bodies ONLY to classify server atomicity; official-list evidence is the ground truth; default disarmed"
+  },
   "targets": [
     {"course_id": "TARGET_COURSE_ID", "class_id": "TARGET_CLASS_ID", "priority": 1, "enabled": true},
     {"course_id": "TARGET_COURSE_ID_ALT", "class_id": "TARGET_CLASS_ID_ALT", "priority": 2, "enabled": true}
