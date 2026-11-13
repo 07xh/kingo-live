@@ -727,6 +727,11 @@ class Engine:
 
     def _readback(self, tr: Transport, offering: Offering) -> Tuple[bool, RawResponse]:
         en = self.cfg["enrollment"]
+        # A course-only match cannot prove which teaching class was selected.
+        # Do not even request a readback when the target identity is incomplete.
+        if not offering.course_id.strip() or not offering.class_id.strip():
+            return False, RawResponse(status=0, headers={}, body=b"",
+                                      error="readback:missing_teaching_class")
         r = self._budgeted(tr, en.get("method", "GET"), en["path"])
         if r.status != 200 or r.error:
             return False, r
@@ -751,7 +756,7 @@ class Engine:
                     return str(row[idx]) if isinstance(idx, int) and idx < len(row) else ""
                 return ""
             if (g("course_id") == offering.course_id
-                    and (not offering.class_id or g("class_id") == offering.class_id)):
+                    and g("class_id") == offering.class_id):
                 return True, r
         return False, r
 
@@ -775,7 +780,7 @@ class Engine:
             except Exception:
                 continue
             o = opt.FailoverPlanner.match(offers, target)
-            if o is not None:
+            if o is not None and o.course_id.strip() and o.class_id.strip():
                 out[self._target_key(target)] = (o, self._submit_body(target, o))
         return out
 
@@ -818,6 +823,9 @@ class Engine:
         if offering is None:
             a.reason = "no_matching_offering"
             return [a], opt.Decision("no_match", "next", a.reason)
+        if not offering.course_id.strip() or not offering.class_id.strip():
+            a.reason = "teaching_class_identity_missing"
+            return [a], opt.Decision("unknown", "halt", a.reason)
         if self.journal.is_confirmed(offering):
             a.reason = "already_confirmed"
             a.success = True
