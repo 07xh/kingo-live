@@ -99,3 +99,11 @@ See [contract and rollout](docs/architecture/course-offering-contract-v1.md).
 the existing Windows-compatible CSV columns. Optional `--standard-json path`
 produces normalized course-only snapshots with a client observation timestamp.
 The old `--json` format stays available.
+
+## Canonical Qiangke list and local Windows JSON viewing
+
+`cd qiangke && python run.py list --kind by_plan --standard-json courses.json`
+uses the shared read-only model and optionally exports only validated course
+fields. Windows **离线工具 → 查看规范化课程 JSON（非实时）** reads that
+local file with the same contract validator, without HTTP, credentials, or
+altering course plans. The historic CSV viewer remains available.

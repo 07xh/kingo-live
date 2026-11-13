@@ -135,6 +135,34 @@ class OfferingContractTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             from_standard_record({k: v for k, v in base.items() if k != "teacher"})
 
+
+    def test_real_qiangke_export_to_real_windows_json_import(self):
+        """Local Qiangke DataTable → canonical file → Windows viewer."""
+        import json
+        import sys
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+        from qiangke.qk.kingo_xk import parse_table
+        from qiangke.run import normalize_list_rows, save_standard_list
+        windows = Path(__file__).resolve().parents[2] / "clients" / "windows" / "source"
+        sys.path.insert(0, str(windows))
+        from core.plan_json import load_plan_json
+
+        html = ("<tr id='tr0'><td id='tr0_kc'>[000045]体育</td>"
+                "<td id='tr0_skbjdm'>000045-101</td>"
+                "<td id='tr0_rkjs'>老师</td><td id='tr0_xk_status'>已选</td></tr>")
+        _, rows = parse_table(html)
+        canonical = normalize_list_rows(rows, "2026-11-13T12:00:00+08:00")
+        with TemporaryDirectory() as t:
+            path = Path(t) / "snapshot.json"
+            save_standard_list(canonical, str(path))
+            displayed = load_plan_json(path)
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual(displayed.rows[0].course_id, "000045")
+        self.assertEqual(displayed.rows[0].remaining_label, "未知")
+        self.assertEqual(raw[0]["source"], "qiangke.table")
+        self.assertEqual(displayed.observed_at, ("2026-11-13T12:00:00+08:00",))
+
     def test_only_public_fields_exported(self):
         item = from_ncwu_plan({
             "kcdm": "1", "kcmc": "课程", "skbjdm": "2",
