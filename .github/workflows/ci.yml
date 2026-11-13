@@ -26,7 +26,7 @@ jobs:
           python-version: ${{ matrix.python }}
       - name: Compile
         shell: bash
-        run: python -m py_compile kingo-live/*.py bench/*.py
+        run: python -m py_compile kingo-live/*.py bench/*.py ncwu/*.py
       - name: Real loopback HTTP end-to-end
         shell: bash
         working-directory: kingo-live
