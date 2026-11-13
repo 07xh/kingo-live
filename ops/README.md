@@ -7,13 +7,13 @@
 | `recon.py` | 五组只读 GET：后端节点、协议/时钟/排队头、N 次时钟采样与秒边界相位、路径变体、窗口判定归属 | #1 #2 #4 #6 #8 #9 |
 | `seat_events.py` | 自适应轮询（静默 60s → 事件窗 2s）、快照差分事件、动态备选重排、单目标一次物理提交闸门 | #3 #12 #13 |
 | `p5_probe.py` | 受控观测 → 分配规则 `fcfs/random/priority` 与限流维度 `ip/session/account/node` 判定 → 具体策略值 | #1 #2 |
-| `test_ops.py` | 回环 HTTP 靶标上的 65 项离线回归 | 验证 |
+| `test_ops.py` | 回环 HTTP 靶标上的 67 项离线断言（需运行验证） | 验证 |
 
 ## 跑起来
 
 ```bash
 cd ops
-python test_ops.py -v                 # 65/65 OK
+python test_ops.py -v                 # 67 项离线断言；以实际运行结果为准
 python p5_probe.py                    # 打印规则判定示例
 python seat_events.py                 # quiet -> submit -> duplicate blocked
 
