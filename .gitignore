@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# Local workbuddy project data (never publish)
+.workbuddy/
+
+# Real credentials / captures / live state — NEVER commit these
+kingo-live/config.json
+kingo-live/config.local.json
+kingo-live/config.*.local.json
+kingo-live/capture.har
+kingo-live/*.har
+!kingo-live/capture.example.har
+kingo-live/probe-body.txt
+kingo-live/local-evidence/
+kingo-live/records.jsonl
+kingo-live/*.jsonl
+kingo-live/intent-journal.jsonl
+.env
+.env.*
+*.cookie
+*.token
+*.sqlite
+*.sqlite3
+*.db
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
