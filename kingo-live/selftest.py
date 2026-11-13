@@ -105,7 +105,10 @@ class Handler(BaseHTTPRequestHandler):
             self.state.last_post_headers = dict(self.headers)
             self.state.submit_count += 1
         if self.state.force_429:
-            self._send(429, {"error": "rate_limited"}, {"Retry-After": "1"})
+            # Keep the loopback cooldown well beyond slow Windows runner setup.
+            # The invariant under test is "NO write before expiry", not a
+            # scheduler-dependent race against a one-second timeout.
+            self._send(429, {"error": "rate_limited"}, {"Retry-After": "120"})
             return
         fields = urllib.parse.parse_qs(raw.decode("utf-8", errors="replace"))
         kcid = fields.get("kcid", [""])[0]
