@@ -51,6 +51,14 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import optimizations as opt
 
+# Share the read-only evidence contract with Windows, NCWU and Qiangke.
+_root = Path(__file__).resolve().parents[1]
+if (_root / "contracts" / "enrollment_evidence.py").is_file() and str(_root) not in sys.path:
+    sys.path.insert(0, str(_root))
+from contracts.enrollment_evidence import (
+    VerificationState, normalized_official_rows, verify_selection,
+)
+
 if os.name == "nt":
     import msvcrt
 else:
@@ -725,35 +733,57 @@ class Engine:
                  for k, v in sub.get("fields", {}).items()}
         return urllib.parse.urlencode(pairs, encoding="utf-8").encode("utf-8")
 
+    def _verified_readback_scope(self) -> bool:
+        """Operator-reviewed contract only; it is NOT inferred from HTTP 200.
+
+        A verified source must bind the entire enrolled-course response to this
+        account and term. The supplied HAR currently contains login/menu only;
+        shipped example values deliberately keep live writes disabled.
+        """
+        en = self.cfg.get("enrollment") or {}
+        account = self.cfg.get("account_scope")
+        term = self.cfg.get("xnxq")
+        return (en.get("official_verified") is True
+                and isinstance(account, str) and bool(account.strip())
+                and isinstance(term, str) and bool(term.strip())
+                and en.get("account_scope") == account
+                and en.get("semester") == term)
+
+    def _official_records(self, r: RawResponse) -> frozenset[tuple[str, str]]:
+        if not self._verified_readback_scope():
+            raise ValueError("官方已选课程列表账号/学期未核验")
+        if r.status != 200 or r.error:
+            raise ValueError("官方已选课程接口未返回可验证数据")
+        en = self.cfg["enrollment"]
+        body = r.body.decode(en.get("encoding", "utf-8"), errors="replace")
+        if en.get("format", "json") == "json":
+            rows = dig(json.loads(body), en.get("json_list_path", ""))
+        else:
+            table = _TableParser()
+            table.feed(body)
+            rows = table.rows
+        return normalized_official_rows(rows, en.get("columns") or {})
+
     def _readback(self, tr: Transport, offering: Offering) -> Tuple[bool, RawResponse]:
         en = self.cfg["enrollment"]
         r = self._budgeted(tr, en.get("method", "GET"), en["path"])
-        if r.status != 200 or r.error:
-            return False, r
-        text = r.body.decode(en.get("encoding", "utf-8"), errors="replace")
-        rows: List[Any] = []
+        self._last_readback_state = VerificationState.UNAVAILABLE
         try:
-            if en.get("format", "json") == "json":
-                rows = dig(json.loads(text), en.get("json_list_path", ""))
-            else:
-                p = _TableParser(); p.feed(text); rows = p.rows
-        except Exception:
+            records = self._official_records(r)
+            verdict = verify_selection(
+                course_id=offering.course_id, class_id=offering.class_id,
+                expected_account=self.cfg["account_scope"],
+                expected_semester=self.cfg["xnxq"],
+                observed_account=en.get("account_scope"),
+                observed_semester=en.get("semester"),
+                official_verified=en.get("official_verified") is True,
+                records=records,
+            )
+            self._last_readback_state = verdict.state
+            return verdict.state is VerificationState.CONFIRMED, r
+        except (KeyError, TypeError, ValueError, UnicodeError, IndexError):
+            # Corrupt, incomplete or unscoped data cannot confirm a result.
             return False, r
-        cols = en.get("columns", {})
-        for row in rows:
-            def g(key):
-                idx = cols.get(key)
-                if idx is None:
-                    return ""
-                if isinstance(row, dict):
-                    return str(row.get(str(idx), ""))
-                if isinstance(row, (list, tuple)):
-                    return str(row[idx]) if isinstance(idx, int) and idx < len(row) else ""
-                return ""
-            if (g("course_id") == offering.course_id
-                    and (not offering.class_id or g("class_id") == offering.class_id)):
-                return True, r
-        return False, r
 
     @staticmethod
     def _target_key(target: dict) -> str:
@@ -796,6 +826,10 @@ class Engine:
             a = Attempt(ts=time.time(), action="enroll", **base)
             a.reason, a.success = "already_confirmed", True
             return [a], opt.Decision("confirmed", "stop", a.reason)
+        if not self._verified_readback_scope():
+            a = Attempt(ts=time.time(), action="enroll", **base)
+            a.reason = "official_readback_contract_not_verified"
+            return [a], opt.Decision("unknown", "halt", a.reason)
         if self.journal.pending_fingerprints():
             a = Attempt(ts=time.time(), action="enroll", **base)
             a.reason = "pending_intent_needs_reconciliation"
@@ -876,7 +910,8 @@ class Engine:
                 # Persist wildcard plan identity as well as the exact class.
                 if planned.fingerprint() != offering.fingerprint():
                     self.journal.write("confirmed", planned, "confirmed_plan_identity")
-            elif rr.status == 200 and not rr.error:
+            elif (rr.status == 200 and not rr.error
+                  and self._last_readback_state is VerificationState.PENDING):
                 # Absence can be delayed visibility; never authorize another POST.
                 sa.reason = "readback_no_match"
             else:
@@ -979,47 +1014,35 @@ class Engine:
 
     # ---- P6: reconcile pending intents against the official list ----------
     def reconcile(self) -> dict:
+        """Read the same scoped official list without any submit or replay."""
         pending = self.journal.pending_fingerprints()
+        if not self._verified_readback_scope():
+            return {"pending_before": len(pending), "resolved": 0,
+                    "error": "official_readback_contract_not_verified"}
         en = self.cfg["enrollment"]
         r = self._budgeted(self.transports[0], en.get("method", "GET"), en["path"])
-        if r.status != 200 or r.error:
-            return {"pending_before": len(pending), "resolved": 0,
-                    "error": r.error or f"http={r.status}"}
-        text = r.body.decode(en.get("encoding", "utf-8"), errors="replace")
         try:
-            if en.get("format", "json") == "json":
-                rows = dig(json.loads(text), en.get("json_list_path", ""))
-            else:
-                p = _TableParser(); p.feed(text); rows = p.rows
-        except Exception as exc:
+            records = self._official_records(r)
+        except (KeyError, TypeError, ValueError, UnicodeError, IndexError):
             return {"pending_before": len(pending), "resolved": 0,
-                    "error": f"parse_error={exc}"}
-        cols = en.get("columns", {})
-        seen = {}
-        for row in rows:
-            def g(key):
-                idx = cols.get(key)
-                if idx is None:
-                    return ""
-                if isinstance(row, dict):
-                    return str(row.get(str(idx), ""))
-                if isinstance(row, (list, tuple)):
-                    return str(row[idx]) if isinstance(idx, int) and idx < len(row) else ""
-                return ""
-            seen[self.journal.fp(f"{g('course_id')}|{g('class_id')}")] = g('course_id')
-        confirmed = rejected = 0
+                    "error": "official_readback_unavailable"}
+        # Use the same normalized exact course/class identity as Windows.
+        seen = {self.journal.fp(f"{course}|{class_id}"): course
+                for course, class_id in records}
+        confirmed = 0
         for fp in pending:
             if fp in seen:
                 self.journal.resolve("confirmed", fp,
                                      "reconciled_from_official_readback")
                 for target in self.planner.targets:
-                    if str(target.get('course_id', '')) == seen[fp] and not target.get('class_id'):
-                        self.journal.write('confirmed', Offering(seen[fp], '', '', '', None),
-                                           'reconciled_plan_identity')
+                    if (str(target.get("course_id", "")) == seen[fp]
+                            and not target.get("class_id")):
+                        self.journal.write("confirmed", Offering(
+                            seen[fp], "", "", "", None),
+                            "reconciled_plan_identity")
                 confirmed += 1
-            # Absence is not proof of rejection: retain unresolved intent.
         return {"pending_before": len(pending), "resolved": confirmed,
-                "confirmed": confirmed, "rejected": rejected,
+                "confirmed": confirmed, "rejected": 0,
                 "remaining_pending": len(self.journal.pending_fingerprints())}
 
     # ---- full real chain ---------------------------------------------------
