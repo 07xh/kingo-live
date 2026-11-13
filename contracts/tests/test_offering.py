@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 from contracts.offering import (
     CourseOffering, from_ncwu_plan, from_qiangke_table, from_windows_item,
+    from_standard_record,
 )
 
 
@@ -113,6 +114,26 @@ class OfferingContractTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 to_csv([{"kcdm": "001", "kcmc": "课程", "left": -1}], destination)
             self.assertEqual(destination.read_text(encoding="utf-8"), "KEEP")
+
+
+    def test_standardized_record_rejects_private_fields_and_invalid_timestamps(self):
+        base = from_ncwu_plan(
+            {"kcdm": "0012", "kcmc": "课程", "left": 2},
+            observed_at="2026-11-13T12:00:00+08:00",
+        ).as_dict()
+        self.assertEqual(from_standard_record(base).course_id, "0012")
+        for change in (
+            {"password": "NOT_ALLOWED"},
+            {"remaining": -1},
+            {"remaining": True},
+            {"course_id": 12},
+            {"observed_at": "2026-11-13T12:00:00"},
+            {"source": "unknown.live"},
+        ):
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                from_standard_record({**base, **change})
+        with self.assertRaises(ValueError):
+            from_standard_record({k: v for k, v in base.items() if k != "teacher"})
 
     def test_only_public_fields_exported(self):
         item = from_ncwu_plan({

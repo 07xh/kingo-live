@@ -14,9 +14,12 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 import json
 import os
+from pathlib import Path
 import sys
+import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -236,10 +239,39 @@ def cmd_auto(args, log) -> int:
     return 0 if hit and hit == total else 1
 
 
-def cmd_list(args, log) -> int:
-    """列出当前各选课流程下的可选课程（青果 DataTable 模式）。"""
-    from qk import kingo_xk as X
+def normalize_list_rows(rows: list[dict], observed_at: str) -> list:
+    """Canonicalize DataTable rows locally; no extra requests."""
+    repo_root = str(Path(__file__).resolve().parent.parent)
+    if repo_root not in sys.path:
+        sys.path.insert(0, repo_root)
+    from contracts.offering import from_qiangke_table
+    return [from_qiangke_table(row, observed_at=observed_at) for row in rows]
 
+
+def save_standard_list(records: list, target: str) -> None:
+    """Atomically publish validated, public-only snapshot records."""
+    dest = Path(target)
+    if dest.is_symlink() or (dest.exists() and not dest.is_file()):
+        raise ValueError("JSON 路径不能是链接或目录")
+    temp_name = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=dest.parent,
+            prefix=".snapshot-", suffix=".tmp", delete=False
+        ) as f:
+            temp_name = f.name
+            json.dump([row.as_dict() for row in records], f,
+                      ensure_ascii=False, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temp_name, dest)
+    finally:
+        if temp_name and os.path.exists(temp_name):
+            os.unlink(temp_name)
+
+
+def cmd_list(args, log) -> int:
+    """Show read-only courses using the shared public data contract."""
     cfg = load(args.config)
     ad = _adapter(cfg, log)
     ad.open()
@@ -250,32 +282,48 @@ def cmd_list(args, log) -> int:
         log.error("当前适配器不支持")
         return 1
 
-    kinds = [args.kind] if getattr(args, "kind", "") else \
-        ["pre_elect", "by_plan", "by_volunteer", "retake"]
-    total_rows = 0
+    kinds = [args.kind] if getattr(args, "kind", "") else [
+        "pre_elect", "by_plan", "by_volunteer", "retake",
+    ]
+    records = []
     for kind in kinds:
         try:
             info = ad.list_courses(kind)
-        except Exception as e:                                   # noqa: BLE001
-            log.warning(f"{kind}: 拉取失败 {e}")
-            continue
-        win = info.get("window") or {}
-        flag = "★开放" if win.get("open") else ("已过期" if win.get("qssj") else "未定义")
-        rows = info.get("rows") or []
-        total_rows += len(rows)
-        print()
-        log.info(f"[{kind}] {win.get('lcmc') or '-'}  {flag}  "
-                 f"{win.get('qssj') or '-'} ~ {win.get('jssj') or '-'}")
+        except Exception:
+            # An error string could contain response data; show only category.
+            log.warning(f"{kind}: 只读列表读取失败；没有生成快照")
+            return 1
+        raw_rows = info.get("rows") or []
+        try:
+            normalized = normalize_list_rows(
+                raw_rows, datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            )
+        except ValueError:
+            log.warning(f"{kind}: 课程身份或人数不符合统一契约；没有生成快照")
+            return 1
+        records.extend(normalized)
+        window = info.get("window") or {}
+        flag = ("★开放" if window.get("open") else
+                ("已过期" if window.get("qssj") else "未定义"))
+        log.info(f"[{kind}] {window.get('lcmc') or '-'}  {flag}  "
+                 f"{window.get('qssj') or '-'} ~ {window.get('jssj') or '-'}")
         log.info(f"         tableId={info.get('table_id')}  总记录={info.get('total')}")
-        if not rows:
+        if not normalized:
             log.warning("         本轮无可选课程")
             continue
-        print(f"         {'课程':<16}{'班号':<8}{'班级名':<12}{'教师':<10}{'学分':<6}{'状态'}")
-        for r in rows:
-            log.info(f"         {X.course_name(r):<16}{r.get('skbh',''):<8}"
-                     f"{r.get('skbjmc',''):<12}{r.get('rkjs',''):<10}"
-                     f"{r.get('xf',''):<6}{r.get('xk_status','')}")
-    return 0 if total_rows else 1
+        print(f"         {'课程':<16}{'教学班号':<20}{'教师':<10}{'快照余量':<24}{'状态'}")
+        for raw, item in zip(raw_rows, normalized):
+            log.info(f"         {item.course_name:<16}{(item.class_id or '-'):<20}"
+                     f"{(item.teacher or ''):<10}{item.availability_label:<24}"
+                     f"{raw.get('xk_status', '')}")
+    target = getattr(args, "standard_json", "")
+    if target:
+        if not records:
+            log.warning("没有有效课程记录；保留旧快照不覆盖")
+            return 1
+        save_standard_list(records, target)
+        log.info(f"已保存 {len(records)} 条只读课程快照；不包含账号或 Cookie，非实时")
+    return 0 if records else 1
 
 
 def cmd_window(args, log) -> int:
@@ -382,6 +430,8 @@ def main() -> int:
     ap.add_argument("--dry", action="store_true", help="只跑 1 秒验证链路")
     ap.add_argument("--kind", default="",
                     help="选课页类型：pre_elect / by_plan / by_volunteer / retake")
+    ap.add_argument("--standard-json", default="", metavar="FILE",
+                    help="仅 list 使用：导出本机只读标准 JSON 快照（非实时）")
     ap.add_argument("--dry-run", action="store_true",
                     help="login 时只做本地自检，不发登录请求（不消耗错误次数）")
     ap.add_argument("-q", "--quiet", action="store_true")
@@ -391,6 +441,8 @@ def main() -> int:
     ap.add_argument("--verify", action="store_true",
                     help="import-cookies 后探测主页是否有效（不发登录请求）")
     args = ap.parse_args()
+    if args.standard_json and args.cmd != "list":
+        ap.error("--standard-json 仅支持 list 只读命令")
 
     global _FORCE_FRESH
     _FORCE_FRESH = args.fresh
