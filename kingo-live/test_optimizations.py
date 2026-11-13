@@ -45,6 +45,8 @@ class LabState:
             self.session_expired = False
             self.empty_readback = False
             self.readback_status = 200
+            self.readback_calls = 0
+            self.readback_fail_after_first = False
             self.silent_reject = False
             self.submit_count = 0
             self.last_get_headers: dict = {}
@@ -87,13 +89,19 @@ class LabHandler(BaseHTTPRequestHandler):
                 self._send(200, {"ok": True})
             return
         if self.path.startswith("/enrollment"):
-            status = self.state.readback_status
+            with self.state.lock:
+                self.state.readback_calls += 1
+                status = (503 if (self.state.readback_fail_after_first
+                                  and self.state.readback_calls >= 2)
+                          else self.state.readback_status)
             if status != 200:
                 self._send(status, {"error": "readback_unavailable"})
                 return
             with self.state.lock:
                 rows = [] if self.state.empty_readback else list(self.state.enrolled)
-            self._send(200, {"data": {"rows": rows}})
+            self._send(200, {"data": {"rows": rows,
+                            "account_scope": "fictional-loopback-user",
+                            "semester": "2026-2027-1"}})
             return
         self._send(404, {"error": "not_found"})
 
@@ -150,6 +158,13 @@ class OptimizationTests(unittest.TestCase):
         c["catalog"]["path"] = "/catalog"
         c["submit"]["path"] = "/submit"
         c["enrollment"]["path"] = "/enrollment"
+        c["enrollment"].update({
+            "official_verified": True,
+            "account_scope": c["account_scope"],
+            "semester": c["xnxq"],
+            "response_account_path": "data.account_scope",
+            "response_semester_path": "data.semester",
+        })
         c["clock"]["path"] = "/catalog"
         c["clock"]["samples"] = samples
         c["clock"]["header"] = clock_header
@@ -158,6 +173,7 @@ class OptimizationTests(unittest.TestCase):
         c["warmup"]["keep_alive"] = keep_alive
         c["budget"]["database"] = str(self.dir / f"budget_{self.tag()}.sqlite")
         c["journal"]["path"] = str(self.dir / f"journal_{self.tag()}.jsonl")
+        c["journal"]["shared_intent_db"] = c["journal"]["path"] + ".sqlite3"
         c["targets"] = targets or [{"course_id": "C001", "class_id": "T01"}]
         c["strategy"].update(strategy)
         c["strategy"]["poll_interval_ms"] = 1.0
@@ -263,7 +279,7 @@ class OptimizationTests(unittest.TestCase):
         eng.close()
 
     def test_unknown_readback_keeps_pending_and_reconcile_resolves(self):
-        self.state.readback_status = 503
+        self.state.readback_fail_after_first = True
         eng = lc.Engine(self.cfg(), records_path=self.rec())
         out = eng.enroll(confirm=True)
         self.assertEqual(out[0].reason, "readback_unavailable")
@@ -275,6 +291,7 @@ class OptimizationTests(unittest.TestCase):
         self.assertEqual(self.state.submit_count, 1)
 
         self.state.readback_status = 200
+        self.state.readback_fail_after_first = False
         # A previous 503 imposed a server-protective cooldown. A recovery
         # read must not bypass it even when the test server recovers.
         blocked_recovery = eng.reconcile()
@@ -291,13 +308,14 @@ class OptimizationTests(unittest.TestCase):
         eng.close()
 
     def test_reconcile_retains_intent_absent_from_official_list(self):
-        self.state.readback_status = 503
+        self.state.readback_fail_after_first = True
         self.state.silent_reject = True
         eng = lc.Engine(self.cfg(), records_path=self.rec())
         eng.enroll(confirm=True)
         self.assertEqual(len(eng.journal.pending_fingerprints()), 1)
 
         self.state.readback_status = 200
+        self.state.readback_fail_after_first = False
         blocked_recovery = eng.reconcile()
         self.assertEqual(blocked_recovery.get("error"), "budget:retry_after")
         time.sleep(eng.budget.retry_after_ms / 1000.0 + 0.1)
