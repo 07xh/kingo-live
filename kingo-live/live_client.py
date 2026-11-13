@@ -1132,6 +1132,8 @@ class Engine:
         pending = self.journal.pending_fingerprints()
         if not self._verified_readback_scope():
             return {"pending_before": len(pending), "resolved": 0,
+                    "confirmed": 0, "rejected": 0,
+                    "remaining_pending": len(pending),
                     "error": "official_readback_contract_not_verified"}
         en = self.cfg["enrollment"]
         r = self._budgeted(self.transports[0], en.get("method", "GET"), en["path"])
@@ -1141,7 +1143,10 @@ class Engine:
         try:
             records = self._official_records(r)
         except (KeyError, TypeError, ValueError, UnicodeError, IndexError):
+            # Malformed or classless responses leave ALL intents unresolved.
             return {"pending_before": len(pending), "resolved": 0,
+                    "confirmed": 0, "rejected": 0,
+                    "remaining_pending": len(pending),
                     "error": "official_readback_unavailable"}
         # Use the same normalized exact course/class identity as Windows.
         seen = {self.journal.fp(f"{course}|{class_id}"): course
