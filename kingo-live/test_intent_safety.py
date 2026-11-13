@@ -33,6 +33,31 @@ class JournalTests(unittest.TestCase):
                 lc.Journal(str(path))
 
 
+class ScopeTests(unittest.TestCase):
+    def test_account_and_term_must_match_journal_scope(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = str(Path(d) / "intent.jsonl")
+            journal = lc.Journal(path)
+            scope = {"account": "fictional-user", "term": "2026-1",
+                     "school": "https://school.example.invalid"}
+            journal.bind_scope(**scope)
+            lc.Journal(path).bind_scope(**scope)
+            with self.assertRaises(RuntimeError):
+                journal.bind_scope(**{**scope, "account": "other-user"})
+            with self.assertRaises(RuntimeError):
+                journal.bind_scope(**{**scope, "term": "2026-2"})
+            with self.assertRaises(RuntimeError):
+                journal.bind_scope(**{**scope, "school": "https://another.example.invalid"})
+
+    def test_existing_unscoped_journal_fails_closed(self):
+        with tempfile.TemporaryDirectory() as d:
+            journal = lc.Journal(str(Path(d) / "legacy.jsonl"))
+            journal.write("pending", lc.Offering("C1", "T01", 1))
+            with self.assertRaises(RuntimeError):
+                journal.bind_scope(account="fictional", term="2026-1",
+                                   school="https://school.example.invalid")
+
+
 class IntentHTTPTests(selftest.LiveHTTPTests):
     def test_confirmed_missing_course_cannot_trigger_fallback(self):
         for class_id in ('T01', ''):
@@ -124,6 +149,29 @@ class IntentHTTPTests(selftest.LiveHTTPTests):
         finally:
             eng.close()
 
+    def test_missing_account_scope_blocks_write_before_transport(self):
+        cfg = self.cfg()
+        cfg["account_scope"] = ""
+        eng = lc.Engine(cfg, self.rec("_no_account"))
+        try:
+            with self.assertRaises(RuntimeError):
+                eng.enroll(confirm=True)
+            self.assertEqual(self.state.submit_count, 0)
+        finally:
+            eng.close()
+
+    def test_reconciliation_ignores_classless_official_records(self):
+        eng = lc.Engine(self.cfg(), self.rec("_classless_reconcile"))
+        try:
+            target = lc.Offering("C001", "", 1)
+            eng.journal.write("pending", target)
+            self.state.enrolled = [{"kcid": "C001", "skbj": ""}]
+            report = eng.reconcile()
+            self.assertEqual(report["resolved"], 0)
+            self.assertEqual(report["remaining_pending"], 1)
+        finally:
+            eng.close()
+
     def test_exact_readback_does_not_accept_course_only_or_other_class(self):
         eng = lc.Engine(self.cfg(), self.rec('_identity'))
         try:
@@ -171,6 +219,7 @@ class IntentHTTPTests(selftest.LiveHTTPTests):
 
 def load_tests(loader, tests, pattern):
     suite = loader.loadTestsFromTestCase(JournalTests)
+    suite.addTests(loader.loadTestsFromTestCase(ScopeTests))
     suite.addTests(IntentHTTPTests(name) for name in IntentHTTPTests.__dict__
                    if name.startswith('test_'))
     return suite
