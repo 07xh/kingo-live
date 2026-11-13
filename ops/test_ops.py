@@ -223,6 +223,13 @@ def main() -> int:
         c.check("gate reconcile hit",
                 gate.reconcile(targets[0], True) == "confirmed")
         c.check("gate still blocked after confirmed", gate.issue(targets[0]) is False)
+        other = seat_events.IntentGate()
+        other.issue(targets[1])
+        other.mark_pending(targets[1], "readback_missing")
+        c.check("gate missing readback remains pending",
+                other.reconcile(targets[1], False) == "pending")
+        c.check("gate missing readback blocks another write",
+                other.issue(targets[1]) is False)
 
         # --- driver -------------------------------------------------------
         drv = seat_events.EventDriver(targets)
