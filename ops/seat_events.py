@@ -173,10 +173,17 @@ class ReleaseMonitor:
         current = {}
         for o in offers:
             if (not getattr(o, "course_id", None)
-                    or not getattr(o, "class_id", None)
-                    or remaining_count(o) is None):
-                continue  # unknown/partial record is not a valid release
-            current[self._fp(o)] = o
+                    or not getattr(o, "class_id", None)):
+                continue
+            fp = self._fp(o)
+            if remaining_count(o) is None:
+                # Preserve a first unknown observation as a sentinel: the
+                # next known positive is NOT evidence of a fresh release.
+                # A later unknown must not overwrite an existing known count.
+                if fp not in self.snapshot:
+                    current[fp] = o
+                continue
+            current[fp] = o
         out: List[ReleaseEvent] = []
         for fp, o in current.items():
             prev = self.snapshot.get(fp)
