@@ -49,6 +49,12 @@ class IntentJournal:
                for v in (class_a, class_b)):
             raise ValueError("教学班号格式不可信")
         class_a, class_b = str(class_a or "").strip(), str(class_b or "").strip()
+        # Legacy clients stringify a missing optional CLI value into "None".
+        # Treat such placeholders as absent, NEVER as a stable class identifier.
+        if class_a.lower() in ("none", "null", "unknown", "-"):
+            class_a = ""
+        if class_b.lower() in ("none", "null", "unknown", "-"):
+            class_b = ""
         if class_a and class_b and class_a != class_b:
             raise ValueError("教学班号字段冲突，禁止提交")
         class_id = class_a or class_b

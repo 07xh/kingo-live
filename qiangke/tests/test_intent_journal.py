@@ -65,6 +65,8 @@ class JournalTests(unittest.TestCase):
             only_code = {"kch_id": "COURSE-001", "name": "Before"}
             self.assertTrue(store.reserve(**args, course=only_code))
             self.assertFalse(store.reserve(**args, course={**only_code, "name": "After"}))
+            # NCWU optional skbjdm=None is historically stringified by argparse.
+            self.assertFalse(store.reserve(**args, course={"kch_id": "COURSE-001", "xkid": "None"}))
 
     def test_missing_term_or_class_never_reserves(self):
         with tempfile.TemporaryDirectory() as tmp:
