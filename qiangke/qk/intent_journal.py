@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 import secrets
 import sqlite3
+from urllib.parse import urlsplit
 
 
 class IntentJournal:
@@ -36,9 +37,11 @@ class IntentJournal:
         class_identity = str(course.get("xkid") or course.get("jxb_ids") or "").strip()
         if not (course_identity or class_identity):
             raise ValueError("目标课程标识为空，拒绝提交")
-        identity = json.dumps([school.strip().lower(), account.strip(), term.strip(),
-                               course_identity, class_identity,
-                               str(course.get("teacher") or "").strip()],
+        # Teacher labels may change without changing the registered course.
+        # Do not let a cosmetic edit create a new submission identity.
+        school_id = urlsplit(school).netloc or school
+        identity = json.dumps([school_id.strip().lower(), account.strip(), term.strip(),
+                               course_identity, class_identity],
                               ensure_ascii=False, separators=(",", ":"))
         return hmac.new(self.salt, identity.encode("utf-8"), hashlib.sha256).hexdigest()
 
