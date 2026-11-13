@@ -1048,6 +1048,9 @@ class Engine:
                     "error": "official_readback_contract_not_verified"}
         en = self.cfg["enrollment"]
         r = self._budgeted(self.transports[0], en.get("method", "GET"), en["path"])
+        if r.status != 200 or r.error:
+            return {"pending_before": len(pending), "resolved": 0,
+                    "error": r.error or f"http={r.status}"}
         try:
             records = self._official_records(r)
         except (KeyError, TypeError, ValueError, UnicodeError, IndexError):
