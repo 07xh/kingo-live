@@ -90,6 +90,25 @@ class FrequencyPolicyTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate_limits(self.strategy)
 
+    def test_verified_two_second_interval_and_unverified_fail_closed(self):
+        self.strategy['interval_range'] = [2, 2]
+        with self.assertRaises(ValueError):
+            validate_limits(self.strategy)
+        self.strategy['official_frequency_policy'] = {
+            'manually_confirmed': True,
+            'source': 'independently verified institutional read-only policy',
+            'min_interval_seconds': 2,
+        }
+        limits = validate_limits(self.strategy)
+        self.assertEqual((limits.low, limits.high), (2, 2))
+        self.strategy['interval_range'] = [1.9, 2]
+        with self.assertRaises(ValueError):
+            validate_limits(self.strategy)
+        self.strategy['interval_range'] = [2, 2]
+        self.strategy['official_frequency_policy']['min_interval_seconds'] = 3
+        with self.assertRaises(ValueError):
+            validate_limits(self.strategy)
+
     def test_unconfirmed_policy_cannot_lower_floor(self):
         self.strategy['interval_range'] = [45, 60]
         self.strategy['official_frequency_policy'] = {
