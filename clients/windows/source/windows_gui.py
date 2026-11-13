@@ -31,6 +31,7 @@ from desktop_tray import TrayController
 from desktop_scheduled_worker import DesktopScheduledWorker, ScheduledWorkerEvent
 from core.inspector import inspect_html
 from core.har_audit import summarize_har, format_summary
+from core.plan_csv import load_plan_csv
 from tools.catalog_evidence import inspect_local_file
 from core.scheduler import Scheduler
 from core.preflight import inspect_readiness, split_checks, format_checks
@@ -242,6 +243,7 @@ class Application(tk.Tk):
         tools_menu.add_command(label="本机 HAR 结构检查（脱敏统计）", command=self.audit_local_har)
         tools_menu.add_command(label="Kingo Live HAR 证据交叉核验（离线）", command=self.review_cross_project_har)
         tools_menu.add_command(label="选课目录证据对照（离线 JSON）", command=self.review_catalog_evidence)
+        tools_menu.add_command(label="查看开课计划 CSV（非实时）", command=self.view_plan_csv)
         tools_menu.add_command(label="北化课表参数 · 离线调度测速", command=self.benchmark_offline)
         tools_menu.add_command(label="华水官方入口清单（离线）", command=self.show_official_entries)
         tools_menu.add_command(label="检测官方登录页可达性（手动）", command=self.probe_official_entries)
@@ -776,6 +778,58 @@ class Application(tk.Tk):
             target=execute, name="KingoOfficialLoginProbe", daemon=True
         ).start()
 
+
+    def view_plan_csv(self) -> None:
+        """Display a user-selected course-plan snapshot, never live seat data."""
+        if self.worker or self.__dict__.get("scheduled_worker"):
+            messagebox.showinfo("请先停止监测", "监测期间不打开本机 CSV 快照。")
+            return
+        filename = filedialog.askopenfilename(
+            title="选择本机已导出的开课计划 CSV（不上传）",
+            filetypes=[("CSV 文件", "*.csv")],
+        )
+        if not filename:
+            return
+        try:
+            records = load_plan_csv(Path(filename))
+        except (OSError, ValueError):
+            messagebox.showerror("读取失败", "CSV 格式、编码或大小不符合要求；未访问学校。")
+            return
+        window = tk.Toplevel(self)
+        window.title("开课计划｜本机 CSV 快照（非实时）")
+        window.geometry("960x500")
+        ttk.Label(
+            window,
+            text="本机导入的历史快照，非实时余量；并非官方当前选课状态，不修改志愿或提交课程。",
+            padding=10,
+        ).pack(fill="x")
+        frame = ttk.Frame(window, padding=(8, 4))
+        frame.pack(fill="both", expand=True)
+        columns = ("id", "name", "class_id", "remaining", "teacher", "schedule", "room")
+        view = ttk.Treeview(frame, columns=columns, show="headings")
+        for key, name, width in (
+            ("id", "课程号", 105), ("name", "课程名称", 180),
+            ("class_id", "教学班", 100), ("remaining", "快照可选人数", 130),
+            ("teacher", "教师", 120), ("schedule", "时间", 140),
+            ("room", "地点", 120),
+        ):
+            view.heading(key, text=name)
+            view.column(key, width=width, stretch=True)
+        scroll = ttk.Scrollbar(frame, orient="vertical", command=view.yview)
+        view.configure(yscrollcommand=scroll.set)
+        scroll.pack(side="right", fill="y")
+        view.pack(fill="both", expand=True)
+        for item in records:
+            view.insert("", "end", values=(
+                item.course_id, item.course_name, item.class_id,
+                item.remaining_label, item.teacher, item.schedule, item.room,
+            ))
+        unknown = sum(item.remaining is None for item in records)
+        ttk.Label(window, text=f"共 {len(records)} 个教学班｜未知余量 {unknown}｜来源：本机文件，非实时",
+                  padding=10).pack(fill="x")
+        self.status.set(f"已读取本机开课计划快照：{len(records)} 行｜非实时")
+        self.log(f"本机开课计划 CSV 已读取 {len(records)} 行；未发起网络请求，未修改目标课程。")
+
     def audit_local_har(self) -> None:
         """Inspect a previously captured HAR locally without network or replay."""
         if self.worker or self.__dict__.get("scheduled_worker"):
@@ -1213,6 +1267,32 @@ def run_packaged_gui_smoke() -> None:
                     entries_dialog.assert_called_once()
                     if "喜鹊儿" not in str(entries_dialog.call_args.args):
                         raise AssertionError("Official entry inventory missing mobile app")
+                # Verify CSV snapshot view in the actual Tk/packaged GUI.
+                # It has its own window and must not replace the target plan.
+                offline_csv = Path(directory) / "course-plan.csv"
+                offline_csv.write_text(
+                    "课程号,课程名称,教学班号,可选人数,任课教师,上课时间,上课地点\\n"
+                    "000123,工程制图,05,6,老师,周一,教室\\n",
+                    encoding="utf-8-sig",
+                )
+                with patch.object(filedialog, "askopenfilename", return_value=str(offline_csv)):
+                    original_count = len(app.table.get_children())
+                    app.view_plan_csv()
+                    app.update()
+                    windows = [w for w in app.winfo_children() if isinstance(w, tk.Toplevel)]
+                    if not windows:
+                        raise AssertionError("CSV viewer window was not created")
+                    if "非实时" not in windows[-1].title():
+                        raise AssertionError("CSV snapshot lacks a non-live warning")
+                    tree = next((w for w in windows[-1].winfo_children()
+                                 for w in w.winfo_children() if isinstance(w, ttk.Treeview)), None)
+                    if tree is None or len(tree.get_children()) != 1:
+                        raise AssertionError("CSV rows missing from packaged viewer")
+                    if tree.set(tree.get_children()[0], "id") != "000123":
+                        raise AssertionError("CSV course code was not preserved")
+                    if len(app.table.get_children()) != original_count:
+                        raise AssertionError("CSV viewer modified the target course list")
+                    windows[-1].destroy()
                 if len(app.table.get_children()) != 2:
                     raise AssertionError("Expected two placeholder courses in packaged template")
                 # Regression for PR #19/#20 GUI composition: main previously
