@@ -1,0 +1,46 @@
+{
+  "target": {
+    "host": "TARGET_HOST",
+    "port": 443,
+    "scheme": "https",
+    "path": "/hsjw//wap/mycourseschedule.action",
+    "cookie_env": "KINGO_COOKIE"
+  },
+  "recon": {
+    "samples": 9,
+    "interval_ms": 200.0,
+    "clock_header": "",
+    "timeout": 3.0,
+    "variants": [
+      "/hsjw/wap/mycourseschedule.action",
+      "/hsjw//wap/mycourseschedule.action",
+      "/hsjw/wap/mycourseschedule.do",
+      "/hsjw/mycourseschedule.action"
+    ],
+    "window_param": "xnxq",
+    "window_value": "2026-2027-1"
+  },
+  "events": {
+    "base_interval_ms": 60000.0,
+    "hot_interval_ms": 2000.0,
+    "hot_rounds": 10,
+    "cooldown_ms": 30000.0,
+    "backoff_ms": 200.0,
+    "w_remain": 0.5,
+    "w_heat": 0.3,
+    "w_priority": 0.05
+  },
+  "strategy": {
+    "concurrency": 1,
+    "sessions": 1,
+    "burst": 0,
+    "respect_retry_after": true,
+    "prebuild": false,
+    "direct_api": false,
+    "single_physical_submit": true
+  },
+  "targets": [
+    {"course_id": "TARGET_COURSE_ID", "class_id": "TARGET_CLASS_ID", "priority": 1, "enabled": true},
+    {"course_id": "TARGET_COURSE_ID_ALT", "class_id": "TARGET_CLASS_ID_ALT", "priority": 2, "enabled": true}
+  ]
+}
