@@ -549,21 +549,22 @@ class Sniper:
 
     # ── 开火 ──
     def fire_one(self, kcdm, skbjdm_hint="", tj="0", jw=None):
-        """发一次提交。返回 (ok, msg, 耗时ms)"""
+        """发一次提交；返回的是传输回执，不是选课成功证明。"""
         items = f"{kcdm},null,{tj},true|"
         t0 = time.perf_counter()
         k = Kingo(jw) if jw is not None else self.k
         try:
             st, txt, ms = k.submit(self.form, items)
-        except Exception as e:
-            return False, f"异常 {e}", (time.perf_counter() - t0) * 1000
+        except Exception as exc:
+            return False, f"请求异常：{type(exc).__name__}，结果待核验", (time.perf_counter() - t0) * 1000
+        # Never print arbitrary response text, including in debug mode:
+        # acknowledgements can contain session information or private data.
         if os.environ.get("HS_DEBUG"):
-            print(f"    [dbg] status={st} len={len(txt)} txt={txt[:120]!r}", flush=True)
-        m = re.search(r'"message"\s*:\s*"([^"]*)"', txt)
-        msg = m.group(1) if m else _txt(txt)[:80]
-        # 注意：这里返回的 ok 只代表 HTTP 层通，不代表选上了。
-        # fire() 仅记录已选门数变化，最终必须逐项核对官方已选课程。
-        return ("200" in txt or "成功" in msg), msg, ms
+            print(f"    [dbg] HTTP status={st} bytes={len(txt)} (body redacted)", flush=True)
+        # An HTTP acknowledgement is transport evidence only. The server
+        # may acknowledge even nonexistent course codes.
+        ack = str(st) in ("200", "201", "302")
+        return ack, "仅收到提交回执；官方已选课程待核验", ms
 
     def warmup(self, n):
         """
@@ -637,8 +638,8 @@ class Sniper:
             ok, msg, ms = self.fire_one(kcdm, skbjdm, tj, jw)
             with rl:
                 results.append((i, ok, msg, ms))
-                log("开火", f"  #{i} {'OK ' if ok else 'ERR'} {ms:6.1f}ms  {msg[:60]}",
-                    "32" if ok else "33")
+                log("回执", f"  #{i} {'HTTP应答' if ok else '响应未知'} {ms:6.1f}ms；官方选课结果待核验",
+                    "33")
 
         ths = [threading.Thread(target=worker, args=(i + 1,), daemon=True) for i in range(conc)]
         for t in ths:
@@ -646,7 +647,7 @@ class Sniper:
         for t in ths:
             t.join(timeout=20)
 
-        # 结果验证：只认已选门数
+        # 只读观察：已选门数变化不是目标课程的成功证明
         # 实测：提交一个不存在的课程号，服务端照样返回 status 200「操作成功」。
         # 响应 200 ≠ 选上了，所以必须回查一次。
         time.sleep(float(self.cfg.get("verify_delay", 0.4)))
