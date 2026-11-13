@@ -203,6 +203,7 @@ class LiveHTTPTests(unittest.TestCase):
         self.state.empty_readback = True
         cfg2 = self.cfg()
         cfg2["journal"]["path"] = str(self.dir / f"journal_{self.tag()}_2.jsonl")
+        cfg2["journal"]["shared_intent_db"] = cfg2["journal"]["path"] + ".sqlite3"
         eng2 = lc.Engine(cfg2, records_path=self.rec("_no"))
         out2 = eng2.enroll(confirm=True)
         self.assertEqual(len(out2), 1)
