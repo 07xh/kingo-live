@@ -24,6 +24,18 @@ from dataclasses import dataclass, field, asdict
 from typing import Any, Dict, Iterable, List, Optional
 
 
+import sys
+from pathlib import Path
+
+try:
+    from contracts.seat_diff import classify_seat_delta, remaining_count
+except ModuleNotFoundError:
+    _root = Path(__file__).resolve().parents[1]
+    if str(_root) not in sys.path:
+        sys.path.insert(0, str(_root))
+    from contracts.seat_diff import classify_seat_delta, remaining_count
+
+
 # ---------------------------------------------------------------------------
 # data
 # ---------------------------------------------------------------------------
@@ -156,26 +168,18 @@ class ReleaseMonitor:
                 poll_cost_ms: float = 0.0) -> List[ReleaseEvent]:
         self.polls += 1
         now = time.time()
-        current = {}
-        for o in offers:
-            current[self._fp(o)] = o
+        current = {self._fp(o): o for o in offers}
         out: List[ReleaseEvent] = []
         for fp, o in current.items():
-            cur = int(getattr(o, "remain", 0) or 0)
             prev = self.snapshot.get(fp)
-            if prev is None:
-                if cur > 0:
-                    out.append(self._event("new", o, cur, None, now, poll_cost_ms))
+            kind = classify_seat_delta(
+                o, prev, first_observation=prev is None,
+                include_decrease=True)
+            if kind is None:
                 continue
-            prv = int(getattr(prev, "remain", 0) or 0)
-            if cur == prv:
-                continue
-            if prv <= 0 < cur:
-                kind = "reopened"
-            elif cur > prv:
-                kind = "increased"
-            else:
-                kind = "decreased"
+            cur = remaining_count(o)
+            prv = remaining_count(prev)
+            # A classified event always has a known current count.
             out.append(self._event(kind, o, cur, prv, now, poll_cost_ms))
         self.snapshot = current
         self.events.extend(out)
