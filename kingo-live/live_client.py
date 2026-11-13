@@ -833,10 +833,8 @@ class Engine:
         base = {"course_id": str(target.get("course_id", "")),
                 "class_id": str(target.get("class_id", ""))}
         planned = Offering(base['course_id'], base['class_id'], '', '', None)
-        if self.journal.is_confirmed(planned):
-            a = Attempt(ts=time.time(), action="enroll", **base)
-            a.reason, a.success = "already_confirmed", True
-            return [a], opt.Decision("confirmed", "stop", a.reason)
+        # Historical journal confirmation is NOT current official evidence.
+        # Verify the current account and semester first.
         if not self._verified_readback_scope():
             a = Attempt(ts=time.time(), action="enroll", **base)
             a.reason = "official_readback_contract_not_verified"
@@ -861,6 +859,10 @@ class Engine:
             a = Attempt(ts=time.time(), action="enroll", **base)
             a.reason, a.success = "already_enrolled_in_official_records", True
             return [a], opt.Decision("confirmed", "stop", a.reason)
+        if self.journal.is_confirmed(planned):
+            a = Attempt(ts=time.time(), action="enroll", **base)
+            a.reason = "historical_confirmation_not_in_official_records"
+            return [a], opt.Decision("pending", "halt", a.reason)
         r = self._budgeted(tr, cat.get("method", "GET"), cat["path"])
         a = Attempt(ts=time.time(), action="enroll", status=r.status,
                     error=r.error or "", **base)
@@ -880,9 +882,9 @@ class Engine:
             a.reason = "no_matching_offering"
             return [a], opt.Decision("no_match", "next", a.reason)
         if self.journal.is_confirmed(offering):
-            a.reason = "already_confirmed"
-            a.success = True
-            return [a], opt.Decision("confirmed", "stop", a.reason)
+            # A cached success is not proof that this session is still enrolled.
+            a.reason = "historical_confirmation_not_in_official_records"
+            return [a], opt.Decision("pending", "halt", a.reason)
         if self.journal.is_pending(offering):
             a.reason = "pending_intent_needs_reconciliation"
             return [a], opt.Decision("pending", "halt", a.reason)
