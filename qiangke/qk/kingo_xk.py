@@ -102,12 +102,13 @@ def course_code(row: dict) -> str:
 
 
 def class_code(row: dict) -> str:
-    """上课班级代码，选课与退选的唯一标识。"""
+    """Authoritative teaching-class code, or empty when not provided."""
     skbjdm = (row.get("skbjdm") or "").strip()
     if skbjdm:
         return skbjdm
-    kcdm, skbh = course_code(row), (row.get("skbh") or "").strip()
-    return f"{kcdm}-{skbh}" if kcdm and skbh else kcdm
+    # A course code or a display class number is not an authoritative
+    # teaching-class identity. Never fabricate skbjdm for enrollment.
+    return ""
 
 
 def course_name(row: dict) -> str:
