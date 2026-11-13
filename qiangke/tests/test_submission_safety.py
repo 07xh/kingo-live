@@ -41,6 +41,40 @@ class SubmissionTests(unittest.TestCase):
                 self.assertEqual(r.code, 'unknown')
                 self.assertFalse(r.ok)
 
+
+    def test_already_enrolled_message_cannot_be_success_without_readback(self):
+        for cls in (KingoAdapter, ZfsoftAdapter):
+            with self.subTest(adapter=cls.name):
+                ad = self.adapter(cls)
+                for reply in ("已选", "已经选", "重复选课", "操作成功", "选课成功"):
+                    with self.subTest(reply=reply), patch.object(
+                        ad.session, 'post',
+                        return_value=Resp(
+                            status=200, url='http://127.0.0.1/submit',
+                            text=reply + " PRIVATE_RESPONSE_SENTINEL"
+                        )
+                    ):
+                        r = ad.grab({'name': 'fictional', 'jxb_ids': 'T1'})
+                        self.assertEqual(r.code, 'unknown')
+                        self.assertFalse(r.ok)
+                        self.assertEqual(r.raw, '')
+                        self.assertNotIn('PRIVATE_RESPONSE_SENTINEL', r.msg)
+
+    def test_rate_limit_response_stops_and_does_not_show_raw_body(self):
+        for cls in (KingoAdapter, ZfsoftAdapter):
+            with self.subTest(adapter=cls.name):
+                ad = self.adapter(cls)
+                with patch.object(ad.session, 'post', return_value=Resp(
+                    status=429, url='http://127.0.0.1/submit',
+                    text='PRIVATE_RESPONSE_SENTINEL 操作过于频繁'
+                )):
+                    r = ad.grab({'name': 'fictional', 'jxb_ids': 'T1'})
+                self.assertEqual(r.code, 'unknown')
+                self.assertFalse(r.ok)
+                self.assertIn('429', r.msg)
+                self.assertEqual(r.raw, '')
+                self.assertNotIn('PRIVATE_RESPONSE_SENTINEL', r.msg)
+
     def test_unknown_stops_worker_without_retry_or_success_notification(self):
         ad = self.adapter(KingoAdapter)
         eng = Engine({'policy': {'max_seconds': .02, 'interval_ms': 1,

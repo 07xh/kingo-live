@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""端到端验证：起 mock 正方 → 跑引擎 → 断言抢到。
+"""正方只读安全回归：mock 登录 → 单次物理提交 → 待官方核验。
 
   python tests/e2e.py
 退出码 0 = 通过。
@@ -59,13 +59,14 @@ def main() -> int:
 
     eng = Engine(build_cfg(base), log)
     res = eng.run()
+    main_submission_count = zf_mock.Handler.state.grab_calls
 
     ok = [r for r in res if r["code"] in ("unknown",)]
     print("\n--- 结果 ---")
     for r in res:
         print(f"  {r['course']:<14}{r['code']:<10}x{r['attempts']:<3}{r['msg'][:30]}")
 
-    # 分支二：会话失效应判 AUTH
+    # 分支二：即使服务端报告 AUTH，已发出提交的结果仍未知，且应标记会话失效
     from qk.adapters import ZfsoftAdapter
     from qk.captcha import CaptchaSolver
     import qk.probe as probe_mod
@@ -85,10 +86,10 @@ def main() -> int:
 
     checks = {
         "收到回执仍为待核验": bool(ok),
-        "重试生效(>=3次)": any(r["attempts"] >= 3 for r in ok),
+        "主流程每目标只提交一次": len(ok) == 1 and ok[0]["attempts"] == 1,
         "登录成功": zf_mock.Handler.state.logins >= 1,
-        "接口被打": zf_mock.Handler.state.grab_calls >= 3,
-        "会话失效判AUTH": r_auth.code == "auth",
+        "主流程没有重复提交": main_submission_count == 1,
+        "会话失效的提交待核验": r_auth.code == "unknown" and not ad.logged_in,
         "探测识别正方": pick.get("system") == "zfsoft",
         "状态文件落盘": os.path.isdir(os.path.join(tempfile.gettempdir(), "qk-e2e-logs")),
     }
