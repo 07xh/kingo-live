@@ -2,6 +2,7 @@
 import os
 import sys
 import tempfile
+from contextlib import closing
 import threading
 import unittest
 from pathlib import Path
@@ -94,7 +95,7 @@ class JournalTests(unittest.TestCase):
                                   separators=(",", ":"))
             legacy_fp = hmac.new(store.salt, identity.encode("utf-8"),
                                  hashlib.sha256).hexdigest()
-            with sqlite3.connect(store.path) as db:
+            with closing(sqlite3.connect(store.path)) as db, db:
                 db.execute("INSERT INTO attempts (fingerprint, state) VALUES (?, ?)",
                            (legacy_fp, "pending"))
             self.assertFalse(store.reserve(school="https://example.invalid",
