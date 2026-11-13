@@ -50,3 +50,11 @@ ncwu/hs_cookie.txt
 ncwu/*.cookie
 ncwu/plan*.csv
 ncwu/plan*.html
+
+# qiangke/ 子模块：本地配置与抓包现场
+qiangke/config.ncwu.json
+qiangke/config.local.json
+qiangke/logs/
+qiangke/_recon/
+qiangke/probe-result.json
+qiangke/status-*.json
