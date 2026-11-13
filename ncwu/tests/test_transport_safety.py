@@ -1,5 +1,7 @@
 """NCWU transport must not replay a possibly committed enrollment."""
 import sys
+import os
+import tempfile
 import ssl
 import unittest
 from pathlib import Path
@@ -26,10 +28,15 @@ class TransportSafetyTests(unittest.TestCase):
     def test_count_increase_is_not_proof_of_target_enrollment(self):
         engine = Sniper({'cookie': 'fictional', 'concurrency': 1})
         engine.xn, engine.xq, engine.xh = 'fictional', '1', 'fictional'
-        with patch.object(engine.k, 'selected', side_effect=[{'yxms': 1}, {'yxms': 2}]):
-            with patch.object(engine, 'fire_one', return_value=(True, '操作成功', 1)):
-                with patch('hs_sniper.time.sleep'):
-                    self.assertIsNone(engine.fire('fictional-course'))
+        engine.gate_info = {'status': '200', 'result': {'isValidTimerange': '1'}}
+        with tempfile.TemporaryDirectory() as td:
+            with patch.dict(os.environ, {'KINGO_INTENT_DB': os.path.join(td, 'intents.sqlite3')}):
+                with patch.object(engine.k, 'selected', side_effect=[{'yxms': 1}, {'yxms': 2}]):
+                    with patch.object(engine, 'fire_one', return_value=(True, '操作成功', 1)) as fire:
+                        with patch('hs_sniper.time.sleep'):
+                            self.assertIsNone(engine.fire('fictional-course'))
+                            self.assertIsNone(engine.fire('fictional-course'))
+                            self.assertEqual(fire.call_count, 1)
 
 
 if __name__ == '__main__':
