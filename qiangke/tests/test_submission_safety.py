@@ -1,5 +1,6 @@
 """An acknowledgement or a dropped response cannot prove enrollment."""
 import os
+import tempfile
 import sys
 import unittest
 from unittest.mock import patch
@@ -79,9 +80,11 @@ class SubmissionTests(unittest.TestCase):
         ad = self.adapter(KingoAdapter)
         eng = Engine({'policy': {'max_seconds': .02, 'interval_ms': 1,
                                 'backoff_cap_ms': 1, 'jitter': 0}}, Log())
-        with patch.object(ad, 'grab', return_value=GrabResult(False, 'unknown', 'uncertain')) as grab:
-            with patch.object(eng.notifier, 'hit') as hit:
-                eng._worker(ad, {'name': 'fictional'})
+        with tempfile.TemporaryDirectory() as td:
+            with patch.dict(os.environ, {'KINGO_INTENT_DB': os.path.join(td, 'intents.sqlite3')}):
+                with patch.object(ad, 'grab', return_value=GrabResult(False, 'unknown', 'uncertain')) as grab:
+                    with patch.object(eng.notifier, 'hit') as hit:
+                        eng._worker(ad, {'name': 'fictional'})
         self.assertEqual(grab.call_count, 1)
         hit.assert_not_called()
         self.assertEqual(len(eng.results), 1)
