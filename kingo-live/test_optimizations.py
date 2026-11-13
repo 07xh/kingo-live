@@ -284,7 +284,7 @@ class OptimizationTests(unittest.TestCase):
         self.assertEqual(rep["rejected"], 0)
         eng.close()
 
-    def test_reconcile_rejects_intent_absent_from_official_list(self):
+    def test_reconcile_retains_intent_absent_from_official_list(self):
         self.state.readback_status = 503
         self.state.silent_reject = True
         eng = lc.Engine(self.cfg(), records_path=self.rec())
@@ -294,8 +294,8 @@ class OptimizationTests(unittest.TestCase):
         self.state.readback_status = 200
         rep = eng.reconcile()
         self.assertEqual(rep["confirmed"], 0)
-        self.assertEqual(rep["rejected"], 1)
-        self.assertEqual(rep["remaining_pending"], 0)
+        self.assertEqual(rep["rejected"], 0)
+        self.assertEqual(rep["remaining_pending"], 1)
         eng.close()
 
     def test_classifier_action_table(self):
@@ -343,3 +343,4 @@ class OptimizationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+

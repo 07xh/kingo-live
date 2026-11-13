@@ -43,7 +43,6 @@ import sys
 import threading
 import time
 import urllib.parse
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import closing
 from dataclasses import dataclass, field, asdict
 from html.parser import HTMLParser
@@ -98,7 +97,6 @@ class RequestBudget:
         self.rate = float(rate)
         self.burst = int(burst)
         self.retry_after_ms = float(retry_after_ms)
-        self.lease = Lease(self.db_path + ".lease")
         self._lock = threading.Lock()
         with closing(self._connect()) as db:
             db.execute("CREATE TABLE IF NOT EXISTS requests (ts REAL NOT NULL)")
@@ -112,8 +110,8 @@ class RequestBudget:
     def reserve(self) -> Tuple[bool, float, str]:
         """Return (allowed, wait_ms, reason)."""
         now = time.time()
-        with self.lease:
-            with self._lock, closing(self._connect()) as db:
+        with self._lock:
+            with Lease(self.db_path + ".lease"), closing(self._connect()) as db:
                 row = db.execute(
                     "SELECT until FROM cooldown WHERE key='global'").fetchone()
                 if row and row[0] > now:
@@ -131,8 +129,8 @@ class RequestBudget:
 
     def cooldown(self, retry_after_header_ms: float = 0.0) -> float:
         until = time.time() + max(self.retry_after_ms, retry_after_header_ms) / 1000.0
-        with self.lease:
-            with self._lock, closing(self._connect()) as db:
+        with self._lock:
+            with Lease(self.db_path + ".lease"), closing(self._connect()) as db:
                 db.execute("INSERT OR REPLACE INTO cooldown(key, until) "
                            "VALUES('global', ?)", (until,))
                 db.commit()
@@ -433,7 +431,24 @@ class Journal:
     def __init__(self, path: str, salt: bytes = b""):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.salt = salt or secrets.token_bytes(32)
+        self._lock = threading.RLock()
+        key_path = self.path.with_name(self.path.name + '.key')
+        with Lease(str(self.path) + '.key.lock'):
+            if salt:
+                self.salt = salt
+            elif key_path.exists():
+                self.salt = key_path.read_bytes()
+                if len(self.salt) != 32:
+                    raise RuntimeError('Invalid journal key; reconcile manually before submitting')
+            else:
+                if self.path.exists() and self.path.stat().st_size:
+                    raise RuntimeError('Legacy journal has no durable key; reconcile manually before submitting')
+                self.salt = secrets.token_bytes(32)
+                fd = os.open(key_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                with os.fdopen(fd, 'wb') as fh:
+                    fh.write(self.salt)
+                    fh.flush()
+                    os.fsync(fh.fileno())
 
     def fp(self, value: str) -> str:
         return hmac.new(self.salt, value.encode(), hashlib.sha256).hexdigest()[:24]
@@ -441,8 +456,11 @@ class Journal:
     def _write_fp(self, state: str, fp: str, note: str = "") -> None:
         rec = {"ts": round(time.time(), 6), "state": state,
                "fp": fp, "note": note}
-        with open(self.path, "a", encoding="utf-8") as fh:
-            fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        with self._lock, Lease(str(self.path) + '.write.lock'):
+            with open(self.path, "a", encoding="utf-8") as fh:
+                fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+                fh.flush()
+                os.fsync(fh.fileno())
 
     def write(self, state: str, offering: Offering, note: str = "") -> None:
         self._write_fp(state, self.fp(offering.fingerprint()), note)
@@ -455,18 +473,30 @@ class Journal:
         """All intents that still need an official readback verdict."""
         if not self.path.exists():
             return set()
-        states: Dict[str, set] = {}
+        states: Dict[str, str] = {}
         for line in self.path.read_text(encoding="utf-8").splitlines():
             try:
                 r = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            states.setdefault(r.get("fp", ""), set()).add(r.get("state", ""))
-        return {fp for fp, s in states.items()
-                if "pending" in s and not (s & {"confirmed", "rejected"})}
+            states[r.get("fp", "")] = r.get("state", "")
+        return {fp for fp, state in states.items() if state == "pending"}
 
     def is_pending(self, offering: Offering) -> bool:
         return self.fp(offering.fingerprint()) in self.pending_fingerprints()
+
+    def is_confirmed(self, offering: Offering) -> bool:
+        fp = self.fp(offering.fingerprint())
+        state = None
+        if self.path.exists():
+            for line in self.path.read_text(encoding='utf-8').splitlines():
+                try:
+                    rec = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if rec.get('fp') == fp:
+                    state = rec.get('state')
+        return state == 'confirmed'
 
 
 # ---------------------------------------------------------------------------
@@ -541,6 +571,7 @@ class Engine:
         self.journal = Journal(cfg.get("journal", {}).get("path", "kingo-intents.jsonl"))
         self.records_path = Path(records_path)
         self._rec_lock = threading.Lock()
+        self._intent_lock = threading.Lock()
         self.last_probe_body = b""
         self.last_probe_headers: Dict[str, str] = {}
         if self.st.direct_api:
@@ -683,6 +714,9 @@ class Engine:
             "token": self.cfg.get("token", ""),
         }
         values.update({k: str(v) for k, v in target.items()})
+        # A wildcard plan must submit the actual class matched in the catalog.
+        values['course_id'] = offering.course_id
+        values['class_id'] = offering.class_id
         if sub.get("encoding", "form") == "json":
             payload = {k: v.format(**values) if isinstance(v, str) else v
                        for k, v in sub.get("fields", {}).items()}
@@ -748,11 +782,24 @@ class Engine:
     def _attempt_target(self, target: dict,
                         prebuilt: Dict[str, Tuple[Offering, bytes]]
                         ) -> Tuple[List[Attempt], opt.Decision]:
-        """One exact target, real requests, one explicit chain decision."""
+        """Serialize pending check, durable intent and send across cooperating clients."""
+        with self._intent_lock, Lease(str(self.journal.path) + '.intent.lock'):
+            return self._attempt_target_locked(target, prebuilt)
+
+    def _attempt_target_locked(self, target, prebuilt):
         cat, sub = self.cfg["catalog"], self.cfg["submit"]
         tr = self.transports[0]
         base = {"course_id": str(target.get("course_id", "")),
                 "class_id": str(target.get("class_id", ""))}
+        planned = Offering(base['course_id'], base['class_id'], '', '', None)
+        if self.journal.is_confirmed(planned):
+            a = Attempt(ts=time.time(), action="enroll", **base)
+            a.reason, a.success = "already_confirmed", True
+            return [a], opt.Decision("confirmed", "stop", a.reason)
+        if self.journal.pending_fingerprints():
+            a = Attempt(ts=time.time(), action="enroll", **base)
+            a.reason = "pending_intent_needs_reconciliation"
+            return [a], opt.Decision("pending", "halt", a.reason)
         r = self._budgeted(tr, cat.get("method", "GET"), cat["path"])
         a = Attempt(ts=time.time(), action="enroll", status=r.status,
                     error=r.error or "", **base)
@@ -771,30 +818,34 @@ class Engine:
         if offering is None:
             a.reason = "no_matching_offering"
             return [a], opt.Decision("no_match", "next", a.reason)
-        if offering.remain is None or offering.remain <= 0:
-            a.reason = "seat_unknown_or_zero"
-            return [a], opt.Decision("seat_unavailable", "next", a.reason)
+        if self.journal.is_confirmed(offering):
+            a.reason = "already_confirmed"
+            a.success = True
+            return [a], opt.Decision("confirmed", "stop", a.reason)
         if self.journal.is_pending(offering):
             a.reason = "pending_intent_needs_reconciliation"
             return [a], opt.Decision("pending", "halt", a.reason)
 
+        if offering.remain is None or offering.remain <= 0:
+            a.reason = "seat_unknown_or_zero"
+            return [a], opt.Decision("seat_unavailable", "next", a.reason)
+
         key = self._target_key(target)
-        if self.st.prebuild and key in prebuilt:
-            offering, body = prebuilt[key]
+        if (self.st.prebuild and key in prebuilt
+                and prebuilt[key][0].fingerprint() == offering.fingerprint()):
+            _, body = prebuilt[key]
             build_ms = 0.0
         else:
             tb = time.perf_counter()
             body = self._submit_body(target, offering)
             build_ms = (time.perf_counter() - tb) * 1000.0
-        n = max(1, self.st.concurrency * self.st.race_repeat * (self.st.burst or 1))
-        jobs = [(i, i % len(self.transports)) for i in range(n)]
-
-        def one(job) -> Attempt:
-            _idx, ti = job
+        def one() -> Attempt:
             t0 = time.perf_counter()
-            local_tr = self.transports[ti]
+            local_tr = self.transports[0]
             headers = {"Content-Type": "application/json; charset=UTF-8"} \
                 if sub.get("encoding", "form") == "json" else None
+            # Must survive a crash or lost response after the server commits.
+            self.journal.write("pending", offering, "before_send")
             sr = self._budgeted(local_tr, sub.get("method", "POST"),
                                 sub["path"], body=body, headers=headers,
                                 build_ms=build_ms)
@@ -804,16 +855,16 @@ class Engine:
             sa.add_stages(sr)
             sa.submit_ms = (time.perf_counter() - t0) * 1000.0
 
-            # Business-level rejection is known BEFORE any intent is journaled.
+            # Only an explicit business rejection releases an intent.
             pre = self.classifier.classify(sr.status, sr.body, False, sr.error)
             if pre.kind in ("business_full", "business_rejected", "window_closed"):
                 sa.reason = pre.kind
+                self.journal.write("rejected", offering, pre.kind)
                 return sa
             if sr.status not in (200, 201, 302):
-                sa.reason = f"not_accepted_{sr.status}"
+                sa.reason = "submission_unknown"
                 return sa
 
-            self.journal.write("pending", offering, f"http={sr.status}")
             t1 = time.perf_counter()
             ok, rr = self._readback(local_tr, offering)
             sa.add_stages(rr)
@@ -822,23 +873,20 @@ class Engine:
             if ok:
                 sa.reason = "confirmed"
                 self.journal.write("confirmed", offering, f"http={rr.status}")
+                # Persist wildcard plan identity as well as the exact class.
+                if planned.fingerprint() != offering.fingerprint():
+                    self.journal.write("confirmed", planned, "confirmed_plan_identity")
             elif rr.status == 200 and not rr.error:
-                # Official list was read successfully and the target is absent:
-                # a definite business failure, not an unknown result.
+                # Absence can be delayed visibility; never authorize another POST.
                 sa.reason = "readback_no_match"
-                self.journal.write("rejected", offering, f"http={rr.status}")
             else:
                 # The readback itself failed. The submission result is UNKNOWN.
                 # Keep the intent pending for --reconcile; never auto-retry.
                 sa.reason = "readback_unavailable"
             return sa
 
-        if n == 1:
-            atts = [one(jobs[0])]
-        else:
-            with ThreadPoolExecutor(max_workers=max(1, self.st.concurrency)) as pool:
-                futs = [pool.submit(one, j) for j in jobs]
-                atts = [f.result() for f in as_completed(futs)]
+        # One physical write per intent, independent of latency experiment knobs.
+        atts = [one()]
 
         winner = next((x for x in atts if x.success), atts[0])
         d = self.classifier.classify(winner.status, b"", winner.success)
@@ -846,7 +894,7 @@ class Engine:
             d = opt.Decision(winner.reason,
                              "wait" if winner.reason == "window_closed" else "next",
                              winner.reason)
-        elif winner.reason in ("readback_no_match", "readback_unavailable"):
+        elif winner.reason in ("readback_no_match", "readback_unavailable", "submission_unknown"):
             d = opt.Decision("pending", "halt", winner.reason)
         return atts, d
 
@@ -947,7 +995,7 @@ class Engine:
             return {"pending_before": len(pending), "resolved": 0,
                     "error": f"parse_error={exc}"}
         cols = en.get("columns", {})
-        seen = set()
+        seen = {}
         for row in rows:
             def g(key):
                 idx = cols.get(key)
@@ -958,18 +1006,19 @@ class Engine:
                 if isinstance(row, (list, tuple)):
                     return str(row[idx]) if isinstance(idx, int) and idx < len(row) else ""
                 return ""
-            seen.add(self.journal.fp(f"{g('course_id')}|{g('class_id')}"))
+            seen[self.journal.fp(f"{g('course_id')}|{g('class_id')}")] = g('course_id')
         confirmed = rejected = 0
         for fp in pending:
             if fp in seen:
                 self.journal.resolve("confirmed", fp,
                                      "reconciled_from_official_readback")
+                for target in self.planner.targets:
+                    if str(target.get('course_id', '')) == seen[fp] and not target.get('class_id'):
+                        self.journal.write('confirmed', Offering(seen[fp], '', '', '', None),
+                                           'reconciled_plan_identity')
                 confirmed += 1
-            else:
-                self.journal.resolve("rejected", fp,
-                                     "reconciled_from_official_readback")
-                rejected += 1
-        return {"pending_before": len(pending), "resolved": len(pending),
+            # Absence is not proof of rejection: retain unresolved intent.
+        return {"pending_before": len(pending), "resolved": confirmed,
                 "confirmed": confirmed, "rejected": rejected,
                 "remaining_pending": len(self.journal.pending_fingerprints())}
 
@@ -1160,3 +1209,4 @@ if __name__ == "__main__":
         except (AttributeError, OSError, ValueError):
             pass
     sys.exit(main())
+

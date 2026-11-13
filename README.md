@@ -23,6 +23,10 @@ Technical research repository: a real HTTP client for the Kingo/NCWU course-enro
 | `ncwu/hs_sniper.py` | Enrollment engine: gate → clock sync → remainder watch → prewarm → concurrent submit → readback verify |
 | `ncwu/sniper.example.json` | Template only; cookie is empty and injected via `KINGO_COOKIE` |
 
+## 本轮审查与执行语义
+
+见 [2026-11-13 审查报告](docs/audit-2026-11-13.md)。提交回执不等于选中；`qiangke`/`ncwu` 缺少逐课程官方核验时显示待核验并停止重发。通用客户端每意图只写一次、发送前持久落盘、重启保留 pending；同目标并发/重复策略不再复制 POST。Windows 自动提交尚未接通，真实华水端到端仍待验收。
+
 ## Run
 
 ```bash
