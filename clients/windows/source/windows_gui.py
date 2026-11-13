@@ -32,6 +32,7 @@ from desktop_scheduled_worker import DesktopScheduledWorker, ScheduledWorkerEven
 from core.inspector import inspect_html
 from core.har_audit import summarize_har, format_summary
 from core.plan_csv import load_plan_csv
+from core.plan_json import load_plan_json
 from tools.catalog_evidence import inspect_local_file
 from core.scheduler import Scheduler
 from core.preflight import inspect_readiness, split_checks, format_checks
@@ -254,6 +255,7 @@ class Application(tk.Tk):
         tools_menu.add_command(label="Kingo Live HAR 证据交叉核验（离线）", command=self.review_cross_project_har)
         tools_menu.add_command(label="选课目录证据对照（离线 JSON）", command=self.review_catalog_evidence)
         tools_menu.add_command(label="查看开课计划 CSV（非实时）", command=self.view_plan_csv)
+        tools_menu.add_command(label="查看规范化课程 JSON（非实时）", command=self.view_plan_json)
         tools_menu.add_command(label="北化课表参数 · 离线调度测速", command=self.benchmark_offline)
         tools_menu.add_command(label="华水官方入口清单（离线）", command=self.show_official_entries)
         tools_menu.add_command(label="检测官方登录页可达性（手动）", command=self.probe_official_entries)
@@ -790,9 +792,9 @@ class Application(tk.Tk):
 
 
     def view_plan_csv(self) -> None:
-        """Display a user-selected course-plan snapshot, never live seat data."""
+        """Display an explicitly chosen historical CSV, never live availability."""
         if self.worker or self.__dict__.get("scheduled_worker"):
-            messagebox.showinfo("请先停止监测", "监测期间不打开本机 CSV 快照。")
+            messagebox.showinfo("请先停止监测", "监测期间不打开本机快照。")
             return
         filename = filedialog.askopenfilename(
             title="选择本机已导出的开课计划 CSV（不上传）",
@@ -805,12 +807,40 @@ class Application(tk.Tk):
         except (OSError, ValueError):
             messagebox.showerror("读取失败", "CSV 格式、编码或大小不符合要求；未访问学校。")
             return
+        self._render_local_snapshot(records, "CSV", "无可信观察时间，仅为本机历史快照")
+
+    def view_plan_json(self) -> None:
+        """Read canonical NCWU/Qiangke JSON into a separate, offline-only window."""
+        if self.worker or self.__dict__.get("scheduled_worker"):
+            messagebox.showinfo("请先停止监测", "监测期间不打开本机快照。")
+            return
+        filename = filedialog.askopenfilename(
+            title="选择规范化课程 JSON（不是 HAR、日志或账号配置）",
+            filetypes=[("标准课程 JSON 文件", "*.json")],
+        )
+        if not filename:
+            return
+        try:
+            snapshot = load_plan_json(Path(filename))
+        except (OSError, ValueError):
+            messagebox.showerror("读取失败", "JSON 不符合公开课程契约，可能含私密字段或无效数据；未联网。")
+            return
+        source_names = "、".join(snapshot.sources) if snapshot.sources else "无数据"
+        observation = (
+            snapshot.observed_at[0] if len(snapshot.observed_at) == 1 else
+            ("多批次本机观察时间" if snapshot.observed_at else "未标注观察时间")
+        )
+        note = f"文件自报来源：{source_names}｜本机观察：{observation}"
+        self._render_local_snapshot(snapshot.rows, "JSON", note)
+
+    def _render_local_snapshot(self, records, filetype: str, note: str) -> None:
+        """Shared table presenter: never populates or modifies target-course plans."""
         window = tk.Toplevel(self)
-        window.title("开课计划｜本机 CSV 快照（非实时）")
+        window.title(f"开课计划｜本机 {filetype} 快照（非实时）")
         window.geometry("960x500")
         ttk.Label(
             window,
-            text="本机导入的历史快照，非实时余量；并非官方当前选课状态，不修改志愿或提交课程。",
+            text="本机历史快照，非实时余量；不是官方当前选课结果，不修改志愿或提交课程。",
             padding=10,
         ).pack(fill="x")
         frame = ttk.Frame(window, padding=(8, 4))
@@ -835,10 +865,13 @@ class Application(tk.Tk):
                 item.remaining_label, item.teacher, item.schedule, item.room,
             ))
         unknown = sum(item.remaining is None for item in records)
-        ttk.Label(window, text=f"共 {len(records)} 个教学班｜未知余量 {unknown}｜来源：本机文件，非实时",
-                  padding=10).pack(fill="x")
-        self.status.set(f"已读取本机开课计划快照：{len(records)} 行｜非实时")
-        self.log(f"本机开课计划 CSV 已读取 {len(records)} 行；未发起网络请求，未修改目标课程。")
+        ttk.Label(
+            window,
+            text=f"共 {len(records)} 条｜未知余量 {unknown}｜{note}｜必须以官网当前数据为准",
+            padding=10,
+        ).pack(fill="x")
+        self.status.set(f"已读取本机 {filetype} 课程快照：{len(records)} 条｜非实时")
+        self.log(f"本机 {filetype} 快照已读取 {len(records)} 条；未发起网络请求，未修改目标课程。")
 
     def audit_local_har(self) -> None:
         """Inspect a previously captured HAR locally without network or replay."""
@@ -1314,6 +1347,36 @@ def run_packaged_gui_smoke() -> None:
                         raise AssertionError("CSV course code was not preserved")
                     if len(app.table.get_children()) != original_count:
                         raise AssertionError("CSV viewer modified the target course list")
+                    windows[-1].destroy()
+                # Canonical JSON snapshot exercises the real validator inside
+                # both source Tk and the packaged EXE, without any school HTTP.
+                normalized = Path(directory) / "offering-snapshot.json"
+                normalized.write_text(json.dumps([{
+                    "source": "qiangke.table", "course_id": "000045",
+                    "class_id": "000045-101", "course_name": "体育",
+                    "teacher": "老师", "remaining": None,
+                    "observed_at": "2026-11-13T12:00:00+08:00",
+                }], ensure_ascii=False), encoding="utf-8")
+                with patch.object(filedialog, "askopenfilename", return_value=str(normalized)):
+                    unchanged = len(app.table.get_children())
+                    app.view_plan_json()
+                    app.update()
+                    windows = [w for w in app.winfo_children() if isinstance(w, tk.Toplevel)]
+                    if not windows or "JSON 快照（非实时）" not in windows[-1].title():
+                        raise AssertionError("Packaged canonical JSON viewer missing")
+                    result_tree = next(
+                        (child for panel in windows[-1].winfo_children()
+                         for child in panel.winfo_children()
+                         if isinstance(child, ttk.Treeview)), None
+                    )
+                    if result_tree is None or len(result_tree.get_children()) != 1:
+                        raise AssertionError("Canonical JSON snapshot rows missing")
+                    record = result_tree.get_children()[0]
+                    if (result_tree.set(record, "id") != "000045" or
+                            result_tree.set(record, "remaining") != "未知"):
+                        raise AssertionError("Canonical snapshot lost course identity or unknown seat")
+                    if len(app.table.get_children()) != unchanged:
+                        raise AssertionError("JSON snapshot modified the saved course plan")
                     windows[-1].destroy()
                 if len(app.table.get_children()) != 2:
                     raise AssertionError("Expected two placeholder courses in packaged template")

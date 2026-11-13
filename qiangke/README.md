@@ -279,3 +279,12 @@ python tests/test_tls.py       # 10 项：TLS 校验 / 禁用远程明文 / 本�
 3. **青果 PC-1 非标准 DES** —— `key[i*8+j] = keyBit[8k+i]`，按标准 DES 写子密钥全错。
 4. **菜单是 GBK XML** —— `PopMenuServlet.jsp` 要 `decode("gbk")`，且必须 POST `menucode=rongrong&menutype=init`。
 5. **`log/setCookie` 存的是账号名不是密码** —— 别指望从 cookie 还原凭据。
+
+## 只读标准课程 JSON（跨 Windows 客户端）
+
+`python run.py list --kind by_plan --standard-json courses.json`
+将本次实际只读列表的课程代码、教学班、名称、教师、可信余量与
+**本机观察时间**写入本机 JSON（只记录公开课程字段，不导出会话和账号）。
+Windows 客户端可通过“离线工具 → 查看规范化课程 JSON（非实时）”打开。
+任何缺字段或含混余量都不会被当作可信名额；异常/空数据不会覆盖已存在的快照。
+这只是历史快照，不是实时官方状态，也不证明课程已选成功。

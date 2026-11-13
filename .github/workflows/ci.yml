@@ -26,7 +26,7 @@ jobs:
           python-version: ${{ matrix.python }}
       - name: Compile
         shell: bash
-        run: python -m py_compile kingo-live/*.py bench/*.py ncwu/*.py qiangke/run.py qiangke/qk/*.py qiangke/qk/adapters/*.py qiangke/tests/*.py
+        run: python -m py_compile contracts/*.py kingo-live/*.py bench/*.py ncwu/*.py qiangke/run.py qiangke/qk/*.py qiangke/qk/adapters/*.py qiangke/tests/*.py
       - name: Shared read-only offering contract (offline)
         shell: bash
         run: python -m unittest discover -s contracts/tests -q
@@ -42,6 +42,7 @@ jobs:
           python tests/test_tls.py
           python tests/test_pwd.py
           python tests/test_xk.py
+          python tests/test_readonly_export.py
           python tests/test_guard.py
           python tests/test_auto.py
           python tests/e2e_kingo.py
@@ -92,7 +93,7 @@ jobs:
         shell: pwsh
         working-directory: clients/windows/source
         run: |
-          python -m PyInstaller --noconfirm --clean --onefile --windowed --name KingoAssistant-Windows --add-data "config.example.yaml;." --add-data "demo;demo" --add-data "../../../kingo-live/har_to_schema.py;." --collect-submodules pystray windows_gui.py
+          python -m PyInstaller --noconfirm --clean --onefile --windowed --name KingoAssistant-Windows --add-data "config.example.yaml;." --add-data "demo;demo" --add-data "../../../kingo-live/har_to_schema.py;." --paths "../../.." --collect-submodules contracts --collect-submodules pystray windows_gui.py
           if ($LASTEXITCODE -ne 0) { throw "Integrated Windows build failed" }
       - name: Verify packaged executable offline
         shell: pwsh

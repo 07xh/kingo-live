@@ -6,6 +6,7 @@ credential persistence, availability inference, or write-back.
 from __future__ import annotations
 
 from dataclasses import dataclass, asdict
+from datetime import datetime
 from typing import Any, Mapping
 
 
@@ -117,4 +118,36 @@ def from_windows_item(item: Any, *, observed_at: str | None = None) -> CourseOff
         teacher=getattr(item, "teacher", None),
         remaining=getattr(item, "remain", None),
         observed_at=observed_at,
+    )
+
+# Serialized contracts are intentionally strict; no credentials or HAR fields.
+PUBLIC_SOURCES = frozenset({"ncwu.plan", "qiangke.table", "windows.readonly"})
+PUBLIC_FIELDS = frozenset(CourseOffering.__dataclass_fields__)
+
+
+def from_standard_record(data: Mapping[str, Any]) -> CourseOffering:
+    """Re-validate an untrusted public snapshot; it is not live availability."""
+    if not isinstance(data, dict) or set(data) != PUBLIC_FIELDS:
+        raise ValueError("课程快照字段不符合公开契约（含未知或缺失字段）")
+    if not isinstance(data["source"], str) or data["source"] not in PUBLIC_SOURCES:
+        raise ValueError("课程快照来源无效")
+    for field in ("course_id", "course_name"):
+        if not isinstance(data[field], str) or not data[field].strip():
+            raise ValueError("课程标识必须为非空文本")
+    for field in ("class_id", "teacher", "observed_at"):
+        if data[field] is not None and not isinstance(data[field], str):
+            raise ValueError("课程字段只能是文本或空值")
+    timestamp = data["observed_at"]
+    if timestamp is not None:
+        try:
+            value = datetime.fromisoformat(timestamp)
+        except ValueError as exc:
+            raise ValueError("观察时间必须为 ISO8601 时间戳") from exc
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("观察时间必须包含时区")
+    return _offering(
+        source=data["source"], course_id=data["course_id"],
+        class_id=data["class_id"], course_name=data["course_name"],
+        teacher=data["teacher"], remaining=data["remaining"],
+        observed_at=timestamp,
     )

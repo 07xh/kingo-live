@@ -45,3 +45,23 @@ The legacy `--json` output remains unchanged.
 Real parser-to-consumer offline tests verify NCWU HTML → CSV → Windows loader
 and Qiangke DataTable HTML → canonical model. No school requests are made in
 those tests, and no automatic submissions or real-time claims are introduced.
+
+## Active read-only consumers (Qiangke CLI and Windows JSON viewer)
+
+`qiangke/run.py list --kind by_plan --standard-json path.json` normalizes
+**the actual read-only list rows** using `from_qiangke_table` before showing
+course names, teaching-class IDs, teacher and snapshot seat labels. Optional
+JSON export is atomic, contains exactly the public contract fields, and does
+not overwrite the previous snapshot on invalid or empty results. It does not
+send any requests beyond the existing list operation.
+
+Windows: **离线工具 → 查看规范化课程 JSON（非实时）** parses those files
+with `from_standard_record` from the **same shared contract**, not a copied
+validator. The GUI uses one snapshot table renderer for both old CSV and JSON,
+preserves user course plans and does not connect to any school.
+
+The Windows EXE bundles the shared `contracts` package. CI tests the
+standalone Windows source and frozen EXE, checks malformed/private JSON
+rejection, and exercises the real Qiangke DataTable -> canonical JSON ->
+Windows parser path. `observed_at` is only the client's observation time;
+no snapshot certifies live availability or official course enrollment.
