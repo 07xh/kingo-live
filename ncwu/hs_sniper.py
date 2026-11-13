@@ -12,7 +12,7 @@ hs_sniper.py —— 华水青果抢课引擎（门禁 / 盯量 / 校时 / 开火
 1. 判定不看响应文本，看「已选门数」。
    实测：向 saveData 提交一个根本不存在的课程号 0000000000，
    服务端照样返回 {"status":"200","message":"操作成功!"}。
-   响应 200 ≠ 选上了。唯一可信的成功信号是 getSelectLessonScoreKcsInfo 的 yxms +1。
+   响应 200 ≠ 选上了。已选门数变化仅是线索，不能证明目标课程成功。
 
 2. 门禁只认 getWsxkTimeRange?xktype=N 的 status。
    通知写「补选到 17:00」，接口 jssj 是 23:59。差 7 小时。
@@ -124,8 +124,6 @@ class Jw:
         self.timeout = timeout
         self._local = threading.local()
         self._ctx = ssl.create_default_context()
-        self._ctx.check_hostname = False
-        self._ctx.verify_mode = ssl.CERT_NONE
         try:
             self._ctx.set_alpn_protocols(["http/1.1"])
         except NotImplementedError:
@@ -193,7 +191,7 @@ class Jw:
         b = body.encode("gbk", "replace") if isinstance(body, str) else body
         h = self._headers(referer, ajax, "application/x-www-form-urlencoded")
         last = None
-        for attempt in (1, 2):
+        for attempt in (1,):
             try:
                 t0 = time.perf_counter()
                 cn = self.conn()
@@ -210,8 +208,7 @@ class Jw:
             except Exception as e:
                 last = e
                 self.drop()
-                if attempt == 2:
-                    raise
+                raise
         raise RuntimeError(last)
 
     def get(self, path, referer=None, ajax=False):
@@ -560,7 +557,7 @@ class Sniper:
         m = re.search(r'"message"\s*:\s*"([^"]*)"', txt)
         msg = m.group(1) if m else _txt(txt)[:80]
         # 注意：这里返回的 ok 只代表 HTTP 层通，不代表选上了。
-        # 真正的成功判定在 fire() 里查已选门数。
+        # fire() 仅记录已选门数变化，最终必须逐项核对官方已选课程。
         return ("200" in txt or "成功" in msg), msg, ms
 
     def warmup(self, n):
@@ -583,7 +580,7 @@ class Sniper:
         return len(self.pool)
 
     def fire(self, kcdm, skbjdm="", conc=None, tj=None):
-        conc = conc or int(self.cfg.get("concurrency", 3))
+        conc = 1  # A target gets one physical write; parallel duplicates are unsafe.
         # tj（允许调剂）建议开 1：items 里只有 kcdm 没有 skbjdm，
         # 说明班次是服务端按「限选人数 + 调剂」自己分配的。开 1 等于
         # 让系统把你塞进任何还有位的班，成功率显著高于死磕某个班号。
@@ -624,16 +621,8 @@ class Sniper:
         time.sleep(float(self.cfg.get("verify_delay", 0.4)))
         info = self.k.selected(self.xn, self.xq, self.xh) or {}
         after = info.get("yxms")
-        try:
-            delta = int(float(after)) - int(float(before))
-        except Exception:
-            delta = None
-        if delta is not None and delta > 0:
-            self.baseline = after
-            log("验证", f"已选门数 {before} → {after}（+{delta}）**抢到了**", "32")
-            return True
-        log("验证", f"已选门数 {before} → {after}（未变）没抢到", "31")
-        return False
+        log("验证", f"已选门数 {before} → {after}；门数变化不能确认目标课程，结果待核验", "33")
+        return None
 
     # ── 主循环 ──
     def run(self, at=None, once=False):
@@ -716,7 +705,11 @@ class Sniper:
                 fired = True
                 if not getattr(self, "pool", None):
                     self.warmup(int(self.cfg.get("concurrency", 3)))
-                if self.fire(kcdm, pick["skbjdm"]):
+                outcome = self.fire(kcdm, pick["skbjdm"])
+                if outcome is None:
+                    log("暂停", "提交结果待官方已选课程逐项核验，停止自动重发", "33")
+                    return
+                if outcome:
                     self.done.add(kcdm)
                     log("完成", f"{kcdm} {pick['kcmc']} 已进袋", "32")
                 break   # 一轮只打一个目标，避免并发打满
@@ -833,3 +826,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

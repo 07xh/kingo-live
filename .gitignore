@@ -58,3 +58,9 @@ qiangke/logs/
 qiangke/_recon/
 qiangke/probe-result.json
 qiangke/status-*.json
+
+
+# Durable intent keys and lock handles
+*.jsonl.key
+*.lock
+*.lease

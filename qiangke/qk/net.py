@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import gzip
+import http.client
 import http.cookiejar
 import io
 import json as _json
@@ -48,15 +49,35 @@ class Resp:
         return f"<Resp {self.status} {len(self.content)}B {self.elapsed:.3f}s>"
 
 
-class _SecureRedirectHandler(urllib.request.HTTPRedirectHandler):
-    """验证每一次重定向目标，防止 HTTPS 被转成远程明文 HTTP。"""
+def _check_url(url: str, verify_tls: bool = True) -> None:
+    target = urllib.parse.urlsplit(url)
+    if target.scheme not in ('http', 'https') or not target.hostname or target.username:
+        raise ValueError('无效的教务 URL')
+    local = target.hostname in ('localhost', '127.0.0.1', '::1')
+    if target.scheme == 'http' and not local:
+        raise ValueError('远程教务连接必须使用 HTTPS')
+    if not verify_tls and not local:
+        raise ValueError('关闭 TLS 验证仅允许本机测试')
 
-    def __init__(self, validate_url):
-        self.validate_url = validate_url
+
+class _SecureRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def __init__(self, verify_tls):
+        self.verify_tls = verify_tls
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
-        self.validate_url(newurl)
-        return super().redirect_request(req, fp, code, msg, headers, newurl)
+        _check_url(newurl, self.verify_tls)
+        redirected = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if redirected is not None:
+            old, new = urllib.parse.urlsplit(req.full_url), urllib.parse.urlsplit(newurl)
+            if (old.scheme, old.hostname, old.port) != (new.scheme, new.hostname, new.port):
+                for name in ('Cookie', 'Authorization', 'Referer'):
+                    redirected.remove_header(name)
+        return redirected
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
 
 
 class Session:
@@ -66,9 +87,9 @@ class Session:
                  headers: Optional[Dict[str, str]] = None, proxy: str = "",
                  verify_tls: bool = True, logger=None):
         self.base_url = base_url.rstrip("/")
-        self.verify_tls = verify_tls
         if self.base_url:
-            self._check_target(self.base_url)
+            _check_url(self.base_url, verify_tls)
+        self.verify_tls = verify_tls
         self.timeout = timeout
         self.retries = retries
         self.log = logger
@@ -88,26 +109,16 @@ class Session:
             ctx.check_hostname = False
             ctx.verify_mode = ssl.CERT_NONE
         handlers = [urllib.request.HTTPCookieProcessor(self.jar),
-                    urllib.request.HTTPSHandler(context=ctx),
-                    _SecureRedirectHandler(self._check_target)]
+                    urllib.request.HTTPSHandler(context=ctx)]
         if proxy:
             handlers.append(urllib.request.ProxyHandler({"http": proxy, "https": proxy}))
         else:
             handlers.append(urllib.request.ProxyHandler({}))
-        self.opener = urllib.request.build_opener(*handlers)
+        self.opener = urllib.request.build_opener(*handlers, _SecureRedirectHandler(verify_tls))
+        self._no_redirect_opener = urllib.request.build_opener(*handlers, _NoRedirect())
         self._lock = __import__("threading").RLock()
 
     # ---------- 基础请求 ----------
-    def _check_target(self, url: str) -> None:
-        target = urllib.parse.urlsplit(url)
-        local_only = target.hostname in ("localhost", "127.0.0.1", "::1")
-        if target.scheme not in ("http", "https"):
-            raise ValueError("只支持 HTTP(S) URL")
-        if target.scheme == "http" and not local_only:
-            raise ValueError("远程教务连接必须使用 HTTPS")
-        if not self.verify_tls and not local_only:
-            raise ValueError("关闭 TLS 证书验证仅允许本机测试环境")
-
     def abs_url(self, url: str) -> str:
         if url.startswith("http://") or url.startswith("https://"):
             return url
@@ -118,9 +129,10 @@ class Session:
     def request(self, method: str, url: str, params: Optional[dict] = None,
                 data: Optional[Union[dict, bytes, str]] = None, json_body: Any = None,
                 headers: Optional[Dict[str, str]] = None, referer: str = "",
-                allow_redirects: bool = True, timeout: Optional[float] = None) -> Resp:
+                allow_redirects: bool = True, timeout: Optional[float] = None,
+                retry_safe: bool = True) -> Resp:
         url = self.abs_url(url)
-        self._check_target(url)
+        _check_url(url, self.verify_tls)
         if params:
             sep = "&" if "?" in url else "?"
             url = url + sep + urllib.parse.urlencode(params, doseq=True)
@@ -144,11 +156,14 @@ class Session:
             hdrs.update(headers)
 
         last_exc: Optional[Exception] = None
-        for attempt in range(self.retries + 1):
+        # A disconnected write may already have committed on the server.
+        retries = self.retries if retry_safe and method.upper() in ("GET", "HEAD", "OPTIONS") else 0
+        opener = self.opener if allow_redirects else self._no_redirect_opener
+        for attempt in range(retries + 1):
             req = urllib.request.Request(url, data=body, headers=hdrs, method=method.upper())
             t0 = time.perf_counter()
             try:
-                resp = self.opener.open(req, timeout=timeout or self.timeout)
+                resp = opener.open(req, timeout=timeout or self.timeout)
                 raw = resp.read()
                 dt = time.perf_counter() - t0
                 self._sync_time(dict(resp.headers))
@@ -165,9 +180,9 @@ class Session:
                             headers={k.lower(): v for k, v in (e.headers or {}).items()},
                             content=raw, text=self._decode(raw, e.headers), elapsed=dt)
             except (urllib.error.URLError, socket.timeout, ConnectionError, ssl.SSLError,
-                    OSError) as e:
+                    OSError, http.client.HTTPException) as e:
                 last_exc = e
-                if attempt < self.retries:
+                if attempt < retries:
                     time.sleep(0.15 * (attempt + 1))
                     continue
         raise NetError(f"{method} {url} 失败: {last_exc}")
@@ -248,3 +263,4 @@ class Session:
 
     def dump_cookies(self) -> Dict[str, str]:
         return {c.name: c.value for c in self.jar}
+

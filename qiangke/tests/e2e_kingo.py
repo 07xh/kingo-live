@@ -59,7 +59,7 @@ def main() -> int:
 
     eng = Engine(build_cfg(base), log)
     res = eng.run()
-    ok = [r for r in res if r["code"] in ("success", "enrolled")]
+    ok = [r for r in res if r["code"] in ("unknown",)]
 
     # 固定输入下，body 应能通过服务端 token 校验（服务端自己算 md5 组合）
     st = kingo_mock.Handler.state
@@ -75,10 +75,10 @@ def main() -> int:
     checks = {
         "登录加密通过服务端校验": st.crypto_ok,
         "两账号均登录": st.logins >= 2,
-        "全部课程抢到": len(ok) == 2,
+        "两门均待官方核验": len(ok) == 2,
         "命中满员重试": any(r["attempts"] >= 2 for r in ok),
         "选课接口被打": st.grab_calls >= 4,
-        "多学号并发生效": accounts_ok == 2,
+        "两账号分别保留待核验": accounts_ok == 2,
         "解密出的params含用户名": "MjAyMz" in st.last_params or "_u" in st.last_params,
     }
     srv.shutdown()
@@ -93,3 +93,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+

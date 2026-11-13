@@ -10,7 +10,7 @@
   5. GET ticket → 青果会话建立
 
 RSA 是 ohdave/RSAUtils 那套：零填充、128 字节分块、小端、输出小写 hex 左补零到 256。
-已用 HAR 里真实密文验证：encrypt("Lsh20070113@") 与浏览器产生的值逐字节一致。
+已用虚构输入验证 RSA 编码；不在文档保留真实密码或抓包密文。
 """
 from __future__ import annotations
 
@@ -130,3 +130,4 @@ class CasAuth:
             if w in html:
                 return w
         return ""
+

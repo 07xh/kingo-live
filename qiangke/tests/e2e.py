@@ -60,7 +60,7 @@ def main() -> int:
     eng = Engine(build_cfg(base), log)
     res = eng.run()
 
-    ok = [r for r in res if r["code"] in ("success", "enrolled")]
+    ok = [r for r in res if r["code"] in ("unknown",)]
     print("\n--- 结果 ---")
     for r in res:
         print(f"  {r['course']:<14}{r['code']:<10}x{r['attempts']:<3}{r['msg'][:30]}")
@@ -84,7 +84,7 @@ def main() -> int:
     pick = rep.get("pick") or {}
 
     checks = {
-        "抢课成功": bool(ok),
+        "收到回执仍为待核验": bool(ok),
         "重试生效(>=3次)": any(r["attempts"] >= 3 for r in ok),
         "登录成功": zf_mock.Handler.state.logins >= 1,
         "接口被打": zf_mock.Handler.state.grab_calls >= 3,
@@ -104,3 +104,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+

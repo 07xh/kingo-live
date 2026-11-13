@@ -19,7 +19,7 @@ from urllib.parse import urlparse
 
 from ..net import NetError
 from ..rsa_crypt import encrypt, parse_keys
-from .base import AUTH, CONFLICT, ENROLLED, ERR, FULL, OK, Adapter, GrabResult
+from .base import AUTH, CONFLICT, ENROLLED, ERR, FULL, OK, UNKNOWN, Adapter, GrabResult
 
 DEFAULTS = {
     "login_page": "/jwglxt/xtgl/login_slogin.html",
@@ -296,16 +296,18 @@ class ZfsoftAdapter(Adapter):
                                       headers={"X-Requested-With": "XMLHttpRequest",
                                                "Accept": "application/json, text/javascript, */*; q=0.01"})
             except NetError as e:
-                return GrabResult(False, ERR, f"网络异常: {e}", course, 0, time.time() - t0)
+                return GrabResult(False, UNKNOWN, "提交响应丢失，请在官方已选列表核验", course, 0, time.time() - t0)
 
             raw = r.text or ""
             flag, msg = self._read_flag(raw)
             code = self._classify(raw, flag, r.url)
+            # The endpoint may acknowledge even a nonexistent course. Neither
+            # generic success text nor an unrecognized response proves enrollment.
+            if code in (OK, ERR) or not 200 <= r.status < 300:
+                code = UNKNOWN if code != AUTH else AUTH
             res = GrabResult(code in (OK, ENROLLED), code, msg or raw[:120],
                              course, 0, time.time() - t0, raw[:400])
-            if code == OK:
-                self.log.ok(f"抢到！{course.get('name','')} {msg}")
-            elif code == AUTH:
+            if code == AUTH:
                 self.logged_in = False
             return res
 
@@ -330,3 +332,4 @@ class ZfsoftAdapter(Adapter):
         if "login_slogin" in (url or "") or any(w in raw for w in AUTH_WORDS):
             return AUTH
         return ERR
+

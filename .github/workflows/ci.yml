@@ -34,6 +34,8 @@ jobs:
         shell: bash
         working-directory: qiangke
         run: |
+          python tests/test_net_safety.py
+          python tests/test_submission_safety.py
           python tests/test_tls.py
           python tests/test_pwd.py
           python tests/test_xk.py
@@ -45,6 +47,7 @@ jobs:
         shell: bash
         working-directory: kingo-live
         run: |
+          python -m unittest test_intent_safety -q
           python selftest.py
           python test_optimizations.py
           python cli_smoke.py
@@ -105,3 +108,4 @@ jobs:
             clients/windows/source/dist/build-verification.json
           if-no-files-found: error
           retention-days: 14
+

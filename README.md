@@ -23,6 +23,10 @@ Technical research repository: a real HTTP client for the Kingo/NCWU course-enro
 | `ncwu/hs_sniper.py` | Enrollment engine: gate → clock sync → remainder watch → prewarm → concurrent submit → readback verify |
 | `ncwu/sniper.example.json` | Template only; cookie is empty and injected via `KINGO_COOKIE` |
 
+## 本轮审查与执行语义
+
+见 [2026-11-13 审查报告](docs/audit-2026-11-13.md)。提交回执不等于选中；`qiangke`/`ncwu` 缺少逐课程官方核验时显示待核验并停止重发。通用客户端每意图只写一次、发送前持久落盘、重启保留 pending；同目标并发/重复策略不再复制 POST。Windows 自动提交尚未接通，真实华水端到端仍待验收。
+
 ## Run
 
 ```bash
@@ -71,3 +75,4 @@ The Windows client also retains `clients/windows/source/core/har_to_schema.py` f
 ## Windows course-plan CSV snapshot viewer
 
 From the Windows desktop use **离线工具 → 查看开课计划 CSV（非实时）** to inspect a local CSV exported by `ncwu/hs_kcbcx.py --csv`. The viewer uses only the user-selected UTF-8/UTF-8-BOM file; it never connects to the school, writes enrollment requests, changes the user's plans, or persists session credentials. An absent `可选人数` stays **未知**, never inferred from capacity minus enrollment. The viewer must not be interpreted as live availability; comparing with the official page is still required.
+
