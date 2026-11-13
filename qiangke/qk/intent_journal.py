@@ -29,7 +29,7 @@ def term_spellings(term: str) -> tuple[str, ...]:
     if not isinstance(term, str) or not term.strip():
         raise ValueError("缺少明确学期标识")
     raw = term.strip()
-    match = re.fullmatch(r"(\\d{4}(?:-\\d{4})?)[/,-]([1-3])", raw)
+    match = re.fullmatch(r"(\d{4}(?:-\d{4})?)[/,-]([1-3])", raw)
     if not match:
         return (raw,)
     year, part = match.groups()
