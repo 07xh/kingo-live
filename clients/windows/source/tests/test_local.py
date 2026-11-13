@@ -83,6 +83,10 @@ class ClientTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(rows), 2)
             self.assertEqual(request_log.count(("GET", "/page", b"")), 1)
             self.assertEqual(len([r for r in request_log if r[1] == "/catalog"]), 1)
+            self.assertEqual(client.total_requests, 3)
+            self.assertEqual(client.last_status_code, 200)
+            self.assertEqual(client.last_response_bytes, len(html()))
+            self.assertEqual(client.last_transport_error, "")
         finally:
             await client.aclose()
 
@@ -108,8 +112,10 @@ class SchedulerTest(unittest.IsolatedAsyncioTestCase):
             def __init__(self):
                 self.stop = asyncio.Event()
                 self.calls = 0
+                self.total_requests = 0
             async def fetch_course_list(self, *args):
                 self.calls += 1
+                self.total_requests += 1
                 return [CourseItem("TEST101", "电路实验", "张老师", 1),
                         CourseItem("TEST202", "高数", "李老师", 0)]
         dummy = Dummy()
@@ -119,7 +125,11 @@ class SchedulerTest(unittest.IsolatedAsyncioTestCase):
             notifications.append(item.course_id)
         scheduler.notify = notify
         await scheduler.cycle()
+        first_cycle_ms = scheduler.last_cycle_ms
         await scheduler.cycle()
+        self.assertEqual(scheduler.last_cycle_requests, 1)
+        self.assertGreaterEqual(first_cycle_ms, 0)
+        self.assertGreaterEqual(scheduler.last_cycle_ms, 0)
         self.assertEqual(dummy.calls, 2)  # once per cycle, not once per course
         self.assertEqual(notifications, ["TEST101"])
         self.assertTrue(scheduler.states["a"].startswith("发现余量"))

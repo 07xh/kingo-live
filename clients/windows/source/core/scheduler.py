@@ -27,6 +27,8 @@ class Scheduler:
         self.strategy = config["strategy"]
         self.cycles = 0
         self.last_error: str | None = None
+        self.last_cycle_ms = 0.0
+        self.last_cycle_requests = 0
         self.states = {item["key"]: "待监测" for item in config["courses"]}
         state_file = self.strategy.get("state_file", "")
         self._state_store = MonitorStateStore(state_file) if state_file else None
@@ -98,7 +100,21 @@ class Scheduler:
         return accepted
 
     async def cycle(self) -> None:
+        """Time a monitoring cycle, including failed reads; no extra HTTP."""
+        started = time.perf_counter()
+        before = getattr(self.client, "total_requests", None)
         self.cycles += 1
+        try:
+            await self._cycle_inner()
+        finally:
+            self.last_cycle_ms = (time.perf_counter() - started) * 1000
+            after = getattr(self.client, "total_requests", None)
+            self.last_cycle_requests = (
+                max(0, after - before)
+                if isinstance(before, int) and isinstance(after, int) else 0
+            )
+
+    async def _cycle_inner(self) -> None:
         target_ids = [str(c["course_id"]) for c in self.config["courses"] if c.get("course_id")]
         # ONE read for ALL configured targets: no redundant per-course requests.
         catalog = await self.client.fetch_course_list(
