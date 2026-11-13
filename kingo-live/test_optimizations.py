@@ -144,6 +144,7 @@ class OptimizationTests(unittest.TestCase):
             clock_header="Date", probes=2, **strategy):
         c = json.loads((HERE / "config.example.json").read_text(encoding="utf-8"))
         c["base_url"] = f"http://127.0.0.1:{self.port}"
+        c["account_scope"] = "fictional-loopback-user"
         c["cookie"] = ""
         c["verify_tls"] = False
         c["catalog"]["path"] = "/catalog"
