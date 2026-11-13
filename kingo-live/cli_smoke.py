@@ -75,7 +75,7 @@ def main() -> int:
     })
     # The CLI uses the selftest loopback handler but a distinct fictional
     # account. Explicitly bind the mock response to that same identity.
-    state.account_scope = cfg["account_scope"]
+    Handler.state.account_scope = cfg["account_scope"]
     cfg["clock"]["path"] = "/catalog"
     cfg["clock"]["samples"] = 3
     cfg["warmup"]["path"] = "/catalog"
