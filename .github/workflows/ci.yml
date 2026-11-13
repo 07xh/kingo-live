@@ -101,7 +101,7 @@ jobs:
         shell: pwsh
         working-directory: clients/windows/source
         run: |
-          python -m PyInstaller --noconfirm --clean --onefile --windowed --name KingoAssistant-Windows --add-data "config.example.yaml;." --add-data "demo;demo" --add-data "../../../kingo-live/har_to_schema.py;." --paths "../../.." --collect-submodules contracts --collect-submodules pystray windows_gui.py
+          python -m PyInstaller --noconfirm --clean --onefile --windowed --name KingoAssistant-Windows --add-data "config.example.yaml;." --add-data "demo;demo" --add-data "../../../kingo-live/har_to_schema.py;." --paths "../../.." --collect-submodules contracts --hidden-import contracts.har_core --hidden-import contracts.seat_diff --collect-submodules pystray windows_gui.py
           if ($LASTEXITCODE -ne 0) { throw "Integrated Windows build failed" }
       - name: Verify packaged executable offline
         shell: pwsh
