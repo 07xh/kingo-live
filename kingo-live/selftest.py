@@ -149,6 +149,10 @@ class LiveHTTPTests(unittest.TestCase):
         c["catalog"]["path"] = "/catalog"
         c["submit"]["path"] = "/submit"
         c["enrollment"]["path"] = "/enrollment"
+        c["account_scope"] = "fictional-test-account"
+        c["enrollment"].update({"official_verified": True,
+                                "account_scope": c["account_scope"],
+                                "semester": c["xnxq"]})
         c["cookie"] = ""
         c["verify_tls"] = False
         c["budget"]["database"] = str(self.dir / f"budget_{self.tag()}.sqlite")
