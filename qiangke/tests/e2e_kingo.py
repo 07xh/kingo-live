@@ -59,6 +59,7 @@ def main() -> int:
     log = qlog.build("e2e_kingo", os.path.join(tempfile.gettempdir(), "qk-kingo-e2e"))
     log.info(f"mock 青果启动 {base}")
 
+    os.environ['KINGO_INTENT_DB'] = os.path.join(tempfile.mkdtemp(prefix='qk-test-intent-'), 'journal.sqlite3')
     eng = Engine(build_cfg(base), log)
     res = eng.run()
     ok = [r for r in res if r["code"] in ("unknown",)]
