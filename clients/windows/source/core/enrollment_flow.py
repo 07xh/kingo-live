@@ -15,6 +15,7 @@ from core.enrollment import (
 )
 from core.enrollment_state import EngineState, EnrollmentFSM
 from core.preflight import inspect_enrollment_schedule
+from contracts.enrollment_evidence import verify_selection, VerificationState
 
 
 async def _verify(engine, fsm: EnrollmentFSM,
@@ -35,7 +36,16 @@ async def _verify(engine, fsm: EnrollmentFSM,
         except Exception:
             read_error = True
             continue
-        if identity in latest:
+        verdict = verify_selection(
+            course_id=identity[0], class_id=identity[1],
+            expected_account=engine.journal.account_scope,
+            expected_semester=engine.journal.semester,
+            observed_account=getattr(engine.gateway, "account_scope", None),
+            observed_semester=getattr(engine.gateway, "enrollment_semester", None),
+            official_verified=getattr(engine.gateway, "official_enrollment_verified", False),
+            records=latest,
+        )
+        if verdict.state is VerificationState.CONFIRMED:
             return True, latest, read_error
     return False, latest, read_error
 
