@@ -46,6 +46,22 @@ class EvidenceTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 normalized_official_rows(rows, {"course_id": "kc", "class_id": "sk"})
 
+    def test_ncw_u_2026_11_14_empty_or_partial_tables_never_confirm(self):
+        # Sanitized structural facts from the user's second HAR:
+        # DataTable 2549 had zero rows; 5036 had zero rows;
+        # neither supplied a verified teaching-class identifier.
+        self.assertEqual(self.verdict(frozenset()), VerificationState.PENDING)
+        observed_2549 = [{"kcdm": "FICTIONAL-CODE", "kc": "Sample"}]
+        observed_5036 = [{"kcdm": "FICTIONAL-CODE", "status": "selected"}]
+        for rows in (observed_2549, observed_5036):
+            with self.subTest(columns=list(rows[0])):
+                with self.assertRaises(ValueError):
+                    normalized_official_rows(
+                        rows, {"course_id": "kcdm", "class_id": "skbjdm"})
+        # The count/credit endpoint includes yxms but no course or class.
+        self.assertEqual(self.verdict({"yxms": 2.0}),
+                         VerificationState.UNAVAILABLE)
+
     def test_positional_schema_and_no_identity_leaks(self):
         ids = normalized_official_rows([["C01", "T01"]],
                                         {"course_id": 0, "class_id": 1})
