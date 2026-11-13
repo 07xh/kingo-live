@@ -35,7 +35,7 @@ python run.py go         # 开抢
 | DES 算法 | 向量全 PASS | 青果 PC-1 非标准排布，已按 `jkingo.des.js` 规则重建；与站点 JS 逐字节一致 |
 | 选课链路 | 已定位 | `wsxk.zx.html` → `wsxk.zx_dg.html` → `taglib/DataTable.jsp?tableId=` → `wsxk.zx_lc.jsp?lcid=` |
 | 选课时间窗 | 已定位（当前关闭） | `getWsxkTimeRange.action` 返回 `2026-09-18 08:00 ~ 2026-09-19 18:00`，`isValidTimerange=0` |
-| 抢课链路 | 仿真端到端 7/7 PASS | 两账号并发 → 满员重试 → 全部抢到，服务端反向校验 token |
+| 抢课链路 | 仅离线模拟通过 | 两个虚构账号各一次物理提交，结果均待官方核验；模拟服务端不代表真实成功 |
 
 ## 登录：`_p` 为什么必须做双 MD5
 
@@ -264,7 +264,7 @@ python run.py import-cookies --file cookies.txt --verify   # 插件导出的 Net
 ```bash
 python tests/test_xk.py        # 23 项：DataTable 解析 / 空表 / 退化字段 / items 格式
 python tests/test_pwd.py       # 8 项：双 MD5 与虚构黄金向量一致
-python tests/e2e_kingo.py      # 7 项：双账号并发 → 满员重试 → 全抢到
+python tests/e2e_kingo.py      # 7 项：双账号登录 + 单目标单次提交 + 结果待核验
 python tests/test_guard.py     # 16 项：占位符拦截 / 402 熔断
 python tests/test_auto.py      # 5 项：课程匹配 + 回写 + 不误配
 python tests/test_session.py   # 27 项：cookie 落盘/恢复 + 真实 HTTP 往返 + HAR 导入 + 免重登
