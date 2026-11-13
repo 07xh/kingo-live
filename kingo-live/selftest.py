@@ -53,6 +53,7 @@ class State:
             self.last_post_headers = {}
             self.force_429 = False
             self.empty_readback = False
+            self.account_scope = "fictional-loopback-user"
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -94,7 +95,9 @@ class Handler(BaseHTTPRequestHandler):
         if self.path.startswith("/enrollment"):
             with self.state.lock:
                 rows = [] if self.state.empty_readback else list(self.state.enrolled)
-            self._send(200, {"data": {"rows": rows}})
+            self._send(200, {"data": {"rows": rows,
+                            "account_scope": self.state.account_scope,
+                            "semester": "2026-2027-1"}})
             return
         self._send(404, {"error": "not_found"})
 
@@ -150,10 +153,18 @@ class LiveHTTPTests(unittest.TestCase):
         c["catalog"]["path"] = "/catalog"
         c["submit"]["path"] = "/submit"
         c["enrollment"]["path"] = "/enrollment"
+        c["enrollment"].update({
+            "official_verified": True,
+            "account_scope": c["account_scope"],
+            "semester": c["xnxq"],
+            "response_account_path": "data.account_scope",
+            "response_semester_path": "data.semester",
+        })
         c["cookie"] = ""
         c["verify_tls"] = False
         c["budget"]["database"] = str(self.dir / f"budget_{self.tag()}.sqlite")
         c["journal"]["path"] = str(self.dir / f"journal_{self.tag()}.jsonl")
+        c["journal"]["shared_intent_db"] = c["journal"]["path"] + ".sqlite3"
         c["targets"] = [{"course_id": "C001", "class_id": "T01"}]
         c["strategy"].update(strategy)
         return c
@@ -196,6 +207,7 @@ class LiveHTTPTests(unittest.TestCase):
         self.state.empty_readback = True
         cfg2 = self.cfg()
         cfg2["journal"]["path"] = str(self.dir / f"journal_{self.tag()}_2.jsonl")
+        cfg2["journal"]["shared_intent_db"] = cfg2["journal"]["path"] + ".sqlite3"
         eng2 = lc.Engine(cfg2, records_path=self.rec("_no"))
         out2 = eng2.enroll(confirm=True)
         self.assertEqual(len(out2), 1)
