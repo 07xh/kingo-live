@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import unittest
-from ncwu.hs_kcbcx import parse_plan
+from ncwu.hs_kcbcx import parse_plan, _server_remaining
 
 
 def fixture(*, remaining: str | None = None):
@@ -32,6 +32,15 @@ class CoursePlanParserTests(unittest.TestCase):
         self.assertIsNone(rows[0]["left"])
         self.assertEqual(rows[0]["cap"], 135)
         self.assertEqual(rows[0]["taken"], 136)
+
+    def test_missing_or_malformed_server_count_stays_unknown(self):
+        for bad in ("-1", "+2", "可选 7", "3/10", "NaN", "满", "１００", "1000001"):
+            with self.subTest(value=bad):
+                self.assertIsNone(_server_remaining(bad))
+                parsed, _ = parse_plan(fixture(remaining=bad))
+                self.assertIsNone(parsed[0]["left"])
+        self.assertEqual(_server_remaining(" 0 "), 0)
+        self.assertEqual(_server_remaining("12"), 12)
 
 
 if __name__ == "__main__":

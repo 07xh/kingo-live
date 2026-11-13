@@ -55,6 +55,65 @@ class OfferingContractTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 from_ncwu_plan(row)
 
+    def test_ncwu_to_csv_to_real_windows_viewer(self):
+        """Use actual NCWU parser, canonical exporter, Windows CSV importer."""
+        import csv
+        import json
+        from pathlib import Path
+        import sys
+        import tempfile
+        from ncwu.hs_kcbcx import parse_plan, to_csv, to_standard_json
+
+        windows = Path(__file__).resolve().parents[2] / "clients" / "windows" / "source"
+        sys.path.insert(0, str(windows))
+        from core.plan_csv import load_plan_csv
+
+        html = ("<script>showTotalRecord('5327042','2')</script>"
+                "<tr class='O' id='tr1'><td id='tr1_kc'>[001234]工程制图</td>"
+                "<td id='tr1_skbjdm'>001234-05</td>"
+                "<td id='tr1_rkjs'>老师</td><td id='tr1_xkrssx'>135</td>"
+                "<td id='tr1_xkrs'>136/0</td><td id='tr1_qdrs'>6</td></tr>"
+                "<tr class='E' id='tr2'><td id='tr2_sksj'>周二</td></tr>")
+        rows, _ = parse_plan(html)
+        with tempfile.TemporaryDirectory() as td:
+            csv_path, json_path = Path(td) / "plan.csv", Path(td) / "normalized.json"
+            to_csv(rows, csv_path)
+            to_standard_json(rows, json_path, observed_at="2026-11-13T12:00:00+00:00")
+            displayed = load_plan_csv(csv_path)
+            canonical = json.loads(json_path.read_text(encoding="utf-8"))
+            with csv_path.open(encoding="utf-8-sig", newline="") as f:
+                headers = next(csv.reader(f))
+        self.assertEqual(len(headers), 15)
+        self.assertEqual(displayed[0].course_id, "001234")
+        self.assertEqual(displayed[0].class_id, "001234-05")
+        self.assertEqual(displayed[0].remaining, 6)
+        self.assertEqual(canonical[0]["remaining"], 6)
+        self.assertEqual(canonical[0]["course_id"], "001234")
+        self.assertEqual(canonical[0]["observed_at"], "2026-11-13T12:00:00+00:00")
+        self.assertEqual(canonical[0]["source"], "ncwu.plan")
+
+    def test_real_qiangke_table_parser_to_canonical_without_inference(self):
+        from qiangke.qk.kingo_xk import parse_table
+        html = ("<tr id='tr0'><td id='tr0_kc'>[000045]体育</td>"
+                "<td id='tr0_skbjdm'>000045-101</td>"
+                "<td id='tr0_rkjs'>老师</td><td id='tr0_xk_status'>已选</td></tr>")
+        _, rows = parse_table(html)
+        self.assertEqual(len(rows), 1)
+        item = from_qiangke_table(rows[0])
+        self.assertEqual((item.course_id, item.class_id), ("000045", "000045-101"))
+        self.assertIsNone(item.remaining)
+
+    def test_csv_exports_fail_before_overwriting_on_invalid_count(self):
+        from pathlib import Path
+        import tempfile
+        from ncwu.hs_kcbcx import to_csv
+        with tempfile.TemporaryDirectory() as td:
+            destination = Path(td) / "keep.csv"
+            destination.write_text("KEEP", encoding="utf-8")
+            with self.assertRaises(ValueError):
+                to_csv([{"kcdm": "001", "kcmc": "课程", "left": -1}], destination)
+            self.assertEqual(destination.read_text(encoding="utf-8"), "KEEP")
+
     def test_only_public_fields_exported(self):
         item = from_ncwu_plan({
             "kcdm": "1", "kcmc": "课程", "skbjdm": "2",
