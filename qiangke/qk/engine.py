@@ -68,6 +68,8 @@ class Engine:
         for ad in adapters:
             if not ad.logged_in:
                 self.log.error(f"账号 {ad.acct.get('name')} 未登录，跳过")
+                for course in ad.acct["courses"]:
+                    self._record_unsent(ad, course, AUTH, "登录未完成，未发送选课提交")
                 continue
             for c in ad.acct["courses"]:
                 t = threading.Thread(target=self._worker, args=(ad, c), daemon=True)
@@ -137,6 +139,16 @@ class Engine:
             return value.strip()
         raise ValueError("缺少明确学期标识")
 
+    def _record_unsent(self, ad, course, code, message):
+        with self._lock:
+            self.results.append({
+                "account": ad.acct.get("name") or "unknown",
+                "course": course.get("name") or course.get("kch_id") or "",
+                "code": code, "msg": message, "attempts": 0,
+                "write_attempted": False, "elapsed": 0.0,
+                "at": datetime.now().strftime("%H:%M:%S.%f")[:-3],
+            })
+
     def _worker(self, ad, course):
         """At most one real write for a durable account/term/course intent.
 
@@ -145,8 +157,9 @@ class Engine:
         Even a FULL or AUTH response cannot authorize an automatic replay.
         """
         label = f"[{ad.acct.get('name')}/{course.get('name') or course.get('kch_id')}]"
-        if getattr(ad, "blocked", False):
-            self.log.error(f"{label} 登录凭据被锁定，未发送选课提交")
+        if getattr(ad, "blocked", False) or not getattr(ad, "logged_in", False):
+            self.log.error(f"{label} 登录凭据不可用，未发送选课提交")
+            self._record_unsent(ad, course, AUTH, "登录未完成或凭据被锁定，未发送请求")
             return
         db_path = (os.environ.get("KINGO_INTENT_DB")
                    or os.path.join(os.path.expanduser("~"),
@@ -157,12 +170,10 @@ class Engine:
                     or str(course.get("jxb_ids") or "").strip()):
                 raise ValueError("qiangke 需要明确教学班号，不能只凭课程名称提交")
             journal = IntentJournal(db_path)
-            reserved = journal.reserve(
-                school=str(self.opts.get("base_url") or "unknown"),
-                account=str(ad.acct.get("user") or ""),
-                term=self._intent_term(),
-                course=course,
-            )
+            scope = {"school": str(self.opts.get("base_url") or "unknown"),
+                     "account": str(ad.acct.get("user") or ""),
+                     "term": self._intent_term(), "course": course}
+            reserved = journal.reserve(**scope)
         except (OSError, ValueError, sqlite3.Error) as exc:
             self.log.error(f"{label} 本地意图记录不可用，禁止提交：{type(exc).__name__}")
             with self._lock:
@@ -187,20 +198,32 @@ class Engine:
         except Exception as exc:
             self.log.error(f"{label} 提交结果不可确认：{type(exc).__name__}")
             r = None
-        code = getattr(r, "code", UNKNOWN)
-        if code in (OK, ENROLLED, ERR):
-            code = UNKNOWN
-        msg = ("收到提交回执，但无官方逐课程回查，必须人工核验"
-               if code == UNKNOWN else str(getattr(r, "msg", "") or code))
+        definitely_unsent = r is not None and getattr(r, "write_attempted", None) is False
+        if definitely_unsent:
+            try:
+                released = journal.cancel_definitely_unsent(**scope)
+            except (OSError, ValueError, sqlite3.Error):
+                released = False
+            if released:
+                code = r.code if r.code in (AUTH, ERR) else UNKNOWN
+                self._record_unsent(ad, course, code, "提交前检查失败，未发送网络写请求")
+                self.log.warning(f"{label} 提交前失败，已单独记录为未发送")
+                return
+            # A failed journal release must never permit a second submission.
+            self.log.warning(f"{label} 无法核实预留记录的清理状态，继续保留待核验意图")
+        code = UNKNOWN
+        msg = "提交结果未知；只可通过官方已选明细核验，不能自动重复写入"
         with self._lock:
             self.results.append({
                 "account": ad.acct.get("name") or ad.acct.get("user"),
                 "course": course.get("name") or course.get("kch_id"),
-                "code": code, "msg": msg, "attempts": 1,
+                "code": code, "msg": msg,
+                "attempts": 1 if getattr(r, "write_attempted", None) is True else 0,
+                "write_attempted": getattr(r, "write_attempted", None),
                 "elapsed": round(time.perf_counter() - started, 3),
                 "at": datetime.now().strftime("%H:%M:%S.%f")[:-3],
             })
-        self.log.warning(f"{label} 本次物理提交结束（{code}），结果不可自动重发；官方记录待核对")
+        self.log.warning(f"{label} 已提交或可能提交（{code}），结果不可自动重发；官方记录待核对")
 
     # ---------------- 汇总 ----------------
     def _dump(self) -> list[dict]:
