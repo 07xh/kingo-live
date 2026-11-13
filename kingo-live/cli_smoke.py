@@ -64,6 +64,10 @@ def main() -> int:
     cfg["catalog"]["path"] = "/catalog"
     cfg["submit"]["path"] = "/submit"
     cfg["enrollment"]["path"] = "/enrollment"
+    cfg["account_scope"] = "fictional-test-account"
+    cfg["enrollment"].update({"official_verified": True,
+                              "account_scope": cfg["account_scope"],
+                              "semester": cfg["xnxq"]})
     cfg["clock"]["path"] = "/catalog"
     cfg["clock"]["samples"] = 3
     cfg["warmup"]["path"] = "/catalog"
