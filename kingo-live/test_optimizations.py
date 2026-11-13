@@ -45,6 +45,8 @@ class LabState:
             self.session_expired = False
             self.empty_readback = False
             self.readback_status = 200
+            self.readback_calls = 0
+            self.readback_fail_after_first = False
             self.silent_reject = False
             self.submit_count = 0
             self.last_get_headers: dict = {}
@@ -87,7 +89,11 @@ class LabHandler(BaseHTTPRequestHandler):
                 self._send(200, {"ok": True})
             return
         if self.path.startswith("/enrollment"):
-            status = self.state.readback_status
+            with self.state.lock:
+                self.state.readback_calls += 1
+                status = (503 if (self.state.readback_fail_after_first
+                                  and self.state.readback_calls >= 2)
+                          else self.state.readback_status)
             if status != 200:
                 self._send(status, {"error": "readback_unavailable"})
                 return
@@ -269,7 +275,9 @@ class OptimizationTests(unittest.TestCase):
         eng.close()
 
     def test_unknown_readback_keeps_pending_and_reconcile_resolves(self):
-        self.state.readback_status = 503
+        # Initial official scope read succeeds. Only the post-submit
+        # readback fails, so one pending physical attempt must be preserved.
+        self.state.readback_fail_after_first = True
         eng = lc.Engine(self.cfg(), records_path=self.rec())
         out = eng.enroll(confirm=True)
         self.assertEqual(out[0].reason, "readback_unavailable")
@@ -281,6 +289,7 @@ class OptimizationTests(unittest.TestCase):
         self.assertEqual(self.state.submit_count, 1)
 
         self.state.readback_status = 200
+        self.state.readback_fail_after_first = False
         # A previous 503 imposed a server-protective cooldown. A recovery
         # read must not bypass it even when the test server recovers.
         blocked_recovery = eng.reconcile()
@@ -297,13 +306,14 @@ class OptimizationTests(unittest.TestCase):
         eng.close()
 
     def test_reconcile_retains_intent_absent_from_official_list(self):
-        self.state.readback_status = 503
+        self.state.readback_fail_after_first = True
         self.state.silent_reject = True
         eng = lc.Engine(self.cfg(), records_path=self.rec())
         eng.enroll(confirm=True)
         self.assertEqual(len(eng.journal.pending_fingerprints()), 1)
 
         self.state.readback_status = 200
+        self.state.readback_fail_after_first = False
         blocked_recovery = eng.reconcile()
         self.assertEqual(blocked_recovery.get("error"), "budget:retry_after")
         time.sleep(eng.budget.retry_after_ms / 1000.0 + 0.1)
