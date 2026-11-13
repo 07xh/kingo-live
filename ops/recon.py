@@ -236,6 +236,16 @@ class RawGet:
 # probes
 # ---------------------------------------------------------------------------
 
+def public_path(path: str) -> str:
+    """Return an endpoint shape without query values or URI fragments."""
+    parts = urllib.parse.urlsplit(path)
+    safe = urllib.parse.urlencode([(k, "<redacted>") for k, _ in
+                                  urllib.parse.parse_qsl(parts.query,
+                                                         keep_blank_values=True)])
+    return urllib.parse.urlunsplit((parts.scheme, parts.netloc, parts.path,
+                                   safe, ""))
+
+
 def probe_nodes(host: str, port: int) -> dict:
     try:
         nodes = resolve_nodes(host, port)
@@ -321,11 +331,13 @@ def probe_variants(client: RawGet, paths: List[str]) -> dict:
     for p in paths:
         r = client.get(p, preview_bytes=256)
         out.append({
-            "path": p, "status": r.status, "size": r.size,
+            "path": public_path(p), "status": r.status, "size": r.size,
             "sha256": r.sha256, "ttfb_ms": r.ttfb_ms,
             "rate_limited": r.status == 429 or "retry-after" in r.headers,
             "error": r.error,
-            "preview": r.body_preview[:120],
+            # Never emit HTML/JSON previews into a shareable diagnosis.
+            "preview_sha256": hashlib.sha256(
+                r.body_preview.encode("utf-8")).hexdigest()[:12],
         })
     ok = [x for x in out if x["status"] == 200]
     sigs = {(x["size"], x["sha256"]) for x in ok}
@@ -348,7 +360,8 @@ def probe_window(client: RawGet, path: str, param_name: str,
 
     ma, mb = markers(a), markers(b)
     return {
-        "base_path": path, "with_param": with_param,
+        "base_path": public_path(path),
+        "with_param": public_path(with_param),
         "base_status": a.status, "param_status": b.status,
         "base_sha256": a.sha256, "param_sha256": b.sha256,
         "base_markers": ma, "param_markers": mb,
@@ -414,7 +427,8 @@ def run(args: argparse.Namespace) -> dict:
     report = {
         "generated_at": _dt.datetime.now(_dt.timezone.utc).isoformat(),
         "target": {"host": host, "port": port, "scheme": args.scheme,
-                   "path": args.path, "cookie_env": args.cookie_env,
+                   "path": public_path(args.path),
+                   "cookie_env": args.cookie_env,
                    "cookie_present": bool(cookie)},
         "read_only": True,
         "nodes": nodes,

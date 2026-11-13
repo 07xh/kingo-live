@@ -214,3 +214,8 @@ python fingerprint_bridge.py --cdp http://127.0.0.1:9222 \
 仅接受仓库 `contracts/offering.py` 定义的标准 JSON 数组（例如 `ncwu/hs_kcbcx.py --standard-json`、`qiangke/run.py list --standard-json` 的离线导出）。从仓库根目录执行。输出来源、未知字段数量、课程与教学班身份匹配概况，以及两份快照中可解释的名额增加/减少事件数量。**不会读取 Cookie 或学号，不发送请求，不触发提交，不推断是否真正选课成功。** 默认不打印原始课程或教学班号。
 
 `python -m ops.readonly_diagnostics --self-test` 验证本地契约与事件转换。CI 在 Ubuntu/Windows 上运行相关测试。此工具不改变任何原有提交协议和 journal。
+
+
+### 只读报告隐私边界
+
+`recon`、`endpoints` 的共享报告仅保留端点路径结构和查询参数名称，查询值脱敏；`recon` 不再记录响应体预览，改为摘要。浏览器桥接拒绝写请求时只记录 URL 摘要，不把完整 URL 写进日志。这些措施不代表原始 HAR 本身已脱敏；原始抓包仍应只留在受控本机环境。

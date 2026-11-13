@@ -167,6 +167,19 @@ class HardeningTests(unittest.TestCase):
         self.assertEqual(ranker.reorder(
             [target], [seat_events.Offering("C1", "01", 60, 0)]), [])
 
+    def test_query_values_redacted_in_readonly_diagnostics(self):
+        path = "/hsjw/wap/course.action?studentNo=SECRET_STUDENT&token=SECRET_TOKEN"
+        self.assertNotIn("SECRET_", recon.public_path(path))
+        endpoint = endpoints.Endpoint("test", "wap",
+                                     "/hsjw/wap/course.action",
+                                     params={"studentNo": "SECRET_STUDENT"})
+        self.assertNotIn("SECRET_STUDENT", json.dumps(endpoint.public()))
+        result = endpoints.ProbeResult("test", "wap", endpoint.url(),
+                                       status=200, window_marker="open")
+        self.assertNotIn("SECRET_STUDENT", json.dumps(result.public()))
+        classified = endpoints.classify([result])
+        self.assertNotIn("SECRET_STUDENT", json.dumps(classified))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -63,7 +63,7 @@ class Endpoint:
 
     def public(self) -> dict:
         return {"name": self.name, "channel": self.channel,
-                "url": self.url(), "method": self.method,
+                "url": _public_url(self.url()), "method": self.method,
                 "header_names": sorted(self.headers)}
 
 
@@ -97,7 +97,9 @@ class ProbeResult:
                 tuple(sorted(self.rate.items())))
 
     def public(self) -> dict:
-        return asdict(self)
+        result = asdict(self)
+        result["url"] = _public_url(self.url)
+        return result
 
 
 @dataclass
@@ -108,6 +110,15 @@ class WindowObservation:
     marker: str = "unknown"            # open | closed | unknown
     js_decides: bool = False           # response contains a JS-side gate
     note: str = ""
+
+
+def _public_url(value: str) -> str:
+    parts = urllib.parse.urlsplit(value)
+    safe = urllib.parse.urlencode([(k, "<redacted>") for k, _ in
+                                  urllib.parse.parse_qsl(parts.query,
+                                                         keep_blank_values=True)])
+    return urllib.parse.urlunsplit((parts.scheme, parts.netloc, parts.path,
+                                   safe, ""))
 
 
 # ---------------------------------------------------------------------------
@@ -274,7 +285,7 @@ def classify(results: Sequence[ProbeResult]) -> dict:
         "ok": sum(1 for r in results if r.status == 200),
         "errors": [r.name for r in results if r.error],
         "groups": group_list,
-        "open_paths": [r.url for r in results
+        "open_paths": [_public_url(r.url) for r in results
                        if r.status == 200 and r.window_marker == "open"],
         "divergent": len(groups) > 1,
         "independent_entrance": independent,
