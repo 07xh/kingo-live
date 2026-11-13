@@ -26,7 +26,7 @@ jobs:
           python-version: ${{ matrix.python }}
       - name: Compile
         shell: bash
-        run: python -m py_compile contracts/*.py kingo-live/*.py bench/*.py ncwu/*.py qiangke/run.py qiangke/qk/*.py qiangke/qk/adapters/*.py qiangke/tests/*.py
+        run: python -m py_compile contracts/*.py kingo-live/*.py bench/*.py ncwu/*.py qiangke/run.py qiangke/qk/*.py qiangke/qk/adapters/*.py qiangke/tests/*.py ops/*.py
       - name: Shared read-only offering contract (offline)
         shell: bash
         run: python -m unittest discover -s contracts/tests -q
@@ -57,6 +57,13 @@ jobs:
           python test_optimizations.py
           python cli_smoke.py
           python har_to_schema.py --self-test
+      - name: OPS research regressions (offline and localhost only)
+        shell: bash
+        working-directory: ops
+        run: |
+          python test_ops.py
+          python test_fingerprint.py
+          python test_phase2.py
       - name: Offline simulation and P5 matrix
         shell: bash
         working-directory: bench
