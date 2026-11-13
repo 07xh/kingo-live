@@ -1,6 +1,8 @@
 """Offline, network-free policy and shared-budget regression tests."""
 import asyncio
+from contextlib import closing
 from pathlib import Path
+import sqlite3
 import tempfile
 import time
 import unittest
@@ -13,20 +15,8 @@ from core.request_budget import (
 class RequestBudgetTest(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
-        self.addCleanup(self._cleanup_temp)
+        self.addCleanup(self.temp.cleanup)
         self.db = Path(self.temp.name) / "quota.db"
-
-    def _cleanup_temp(self):
-        # Windows can briefly retain SQLite/WAL file handles in the runner.
-        # Retry transient sharing violations; still fail if a handle really leaks.
-        for attempt in range(15):
-            try:
-                self.temp.cleanup()
-                return
-            except PermissionError:
-                if attempt == 14:
-                    raise
-                time.sleep(0.1)
 
     def budget(self, windows=((0.08, 1),), *, verified=True, concurrency=1):
         policy = RequestPolicy(tuple(WindowLimit(*w) for w in windows),
@@ -64,8 +54,7 @@ class RequestBudgetTest(unittest.IsolatedAsyncioTestCase):
         # Windows runner startup/SQLite costs can consume much of a 90ms
         # cooldown. Assert against the persisted deadline, not a hardcoded
         # duration measured only *after* constructing the restarted client.
-        import sqlite3
-        with sqlite3.connect(self.db) as conn:
+        with closing(sqlite3.connect(self.db)) as conn:
             deadline = conn.execute(
                 "SELECT value FROM metadata WHERE key='backoff_until'"
             ).fetchone()[0]
