@@ -83,6 +83,9 @@ class IntentHTTPTests(selftest.LiveHTTPTests):
         cfg['targets'].append({'course_id': 'C002', 'class_id': 'T02'})
         eng = lc.Engine(cfg, self.rec())
         try:
+            eng.journal.bind_scope(
+                account=eng.cfg["account_scope"], term=eng.cfg["xnxq"],
+                school=eng.cfg["base_url"])
             eng.journal.write('pending', lc.Offering('C001', 'T01', '', '', 1))
             self.state.catalog_rows = [self.state.catalog_rows[1]]
             self.state.catalog_rows[0]['kyl'] = '1'
@@ -96,6 +99,9 @@ class IntentHTTPTests(selftest.LiveHTTPTests):
         cfg['targets'].append({'course_id': 'C002', 'class_id': 'T02'})
         eng = lc.Engine(cfg, self.rec())
         try:
+            eng.journal.bind_scope(
+                account=eng.cfg["account_scope"], term=eng.cfg["xnxq"],
+                school=eng.cfg["base_url"])
             eng.journal.write('pending', lc.Offering('C001', 'T01', '', '', 1))
             self.state.catalog_rows[0]['kyl'] = '0'
             self.state.catalog_rows[1]['kyl'] = '1'
