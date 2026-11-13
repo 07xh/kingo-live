@@ -33,3 +33,13 @@ kingo-live/intent-journal.jsonl
 Thumbs.db
 .idea/
 .vscode/
+
+# Integrated Windows desktop artifacts and local state
+clients/windows/source/config.yaml
+clients/windows/source/dist/
+clients/windows/source/build/
+clients/windows/source/*.spec
+clients/windows/source/logs/
+clients/windows/source/data/
+clients/windows/source/*.har
+clients/windows/source/*records*.jsonl
