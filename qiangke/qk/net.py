@@ -48,6 +48,17 @@ class Resp:
         return f"<Resp {self.status} {len(self.content)}B {self.elapsed:.3f}s>"
 
 
+class _SecureRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """验证每一次重定向目标，防止 HTTPS 被转成远程明文 HTTP。"""
+
+    def __init__(self, validate_url):
+        self.validate_url = validate_url
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        self.validate_url(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
 class Session:
     """单账号会话。线程内独立使用；跨线程共享需自行加锁（本项目按线程拆分）。"""
 
@@ -55,12 +66,9 @@ class Session:
                  headers: Optional[Dict[str, str]] = None, proxy: str = "",
                  verify_tls: bool = True, logger=None):
         self.base_url = base_url.rstrip("/")
-        target = urllib.parse.urlsplit(self.base_url)
-        local_only = target.hostname in ("localhost", "127.0.0.1", "::1")
-        if target.scheme == "http" and not local_only:
-            raise ValueError("远程教务连接必须使用 HTTPS")
-        if not verify_tls and not local_only:
-            raise ValueError("关闭 TLS 证书验证仅允许本机测试环境")
+        self.verify_tls = verify_tls
+        if self.base_url:
+            self._check_target(self.base_url)
         self.timeout = timeout
         self.retries = retries
         self.log = logger
@@ -80,7 +88,8 @@ class Session:
             ctx.check_hostname = False
             ctx.verify_mode = ssl.CERT_NONE
         handlers = [urllib.request.HTTPCookieProcessor(self.jar),
-                    urllib.request.HTTPSHandler(context=ctx)]
+                    urllib.request.HTTPSHandler(context=ctx),
+                    _SecureRedirectHandler(self._check_target)]
         if proxy:
             handlers.append(urllib.request.ProxyHandler({"http": proxy, "https": proxy}))
         else:
@@ -89,6 +98,16 @@ class Session:
         self._lock = __import__("threading").RLock()
 
     # ---------- 基础请求 ----------
+    def _check_target(self, url: str) -> None:
+        target = urllib.parse.urlsplit(url)
+        local_only = target.hostname in ("localhost", "127.0.0.1", "::1")
+        if target.scheme not in ("http", "https"):
+            raise ValueError("只支持 HTTP(S) URL")
+        if target.scheme == "http" and not local_only:
+            raise ValueError("远程教务连接必须使用 HTTPS")
+        if not self.verify_tls and not local_only:
+            raise ValueError("关闭 TLS 证书验证仅允许本机测试环境")
+
     def abs_url(self, url: str) -> str:
         if url.startswith("http://") or url.startswith("https://"):
             return url
@@ -101,6 +120,7 @@ class Session:
                 headers: Optional[Dict[str, str]] = None, referer: str = "",
                 allow_redirects: bool = True, timeout: Optional[float] = None) -> Resp:
         url = self.abs_url(url)
+        self._check_target(url)
         if params:
             sep = "&" if "?" in url else "?"
             url = url + sep + urllib.parse.urlencode(params, doseq=True)
