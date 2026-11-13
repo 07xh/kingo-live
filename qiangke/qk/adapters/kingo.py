@@ -578,6 +578,9 @@ class KingoAdapter(Adapter):
             if not hit:
                 self.log.warning(f"  未匹配：{c.get('name')} {c.get('teacher') or ''}")
                 continue
+            if not hit.get("xkid"):
+                self.log.warning("课程行缺少权威教学班号，不能仅凭课程号/展示班号补全 xkid")
+                continue
             c["xkid"] = c.get("xkid") or hit["xkid"]
             left = (hit.get("seats") or {}).get("left")
             tail = f" 余量 {left}" if left is not None else ""
