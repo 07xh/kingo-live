@@ -35,7 +35,7 @@ python run.py go         # 开抢
 | DES 算法 | 向量全 PASS | 青果 PC-1 非标准排布，已按 `jkingo.des.js` 规则重建；与站点 JS 逐字节一致 |
 | 选课链路 | 已定位 | `wsxk.zx.html` → `wsxk.zx_dg.html` → `taglib/DataTable.jsp?tableId=` → `wsxk.zx_lc.jsp?lcid=` |
 | 选课时间窗 | 已定位（当前关闭） | `getWsxkTimeRange.action` 返回 `2026-09-18 08:00 ~ 2026-09-19 18:00`，`isValidTimerange=0` |
-| 抢课链路 | 仿真端到端 7/7 PASS | 两账号并发 → 满员重试 → 全部抢到，服务端反向校验 token |
+| 抢课链路 | 仅离线模拟通过 | 两个虚构账号各一次物理提交，结果均待官方核验；模拟服务端不代表真实成功 |
 
 ## 登录：`_p` 为什么必须做双 MD5
 
@@ -59,7 +59,7 @@ if (isXqeScanQrCode) {
 
 注意 `txt_mm_length` / `txt_mm_expression` 用的仍是**原始密码**长度与字符集，不是 md5 后的。
 
-验证方式不靠猜：`tests/test_pwd.py` 拿真机 HAR 里那次**成功**登录的明文做基准，逐字节比对。
+测试文件已经改用虚构账号与固定向量；不得把真实密码、Cookie 或未脱敏 HAR 提交到仓库。
 
 ## 目录
 
@@ -74,7 +74,7 @@ qiangke/
 │  ├─ adapters/zfsoft.py   正方适配器（备用，华水不用）
 │  ├─ curl2req.py          cURL → 请求模板，自动参数化课程字段
 │  ├─ parse.py             选课列表解析 + 课程匹配
-│  ├─ engine.py            对时 → 多账号并发 → 退避重试 → 汇总
+│  ├─ engine.py            对时 → 多账号准备 → 持久意图检查 → 单次提交 → 待官方核验汇总
 │  ├─ captcha.py           验证码：手工 / OCR 命令 / 打码平台
 │  ├─ probe.py、net.py、notify.py、log.py、diag.py、cas.py
 ├─ mock/kingo_mock.py      青果仿真服务（反向校验 token 与密码算法）
@@ -257,14 +257,14 @@ python run.py import-cookies --file cookies.txt --verify   # 插件导出的 Net
 
 ## 返回码分类
 
-`success` 选上 / `enrolled` 已在 / `full` 满员重试 / `conflict` 冲突 / `auth` 会话失效自动重登 / `error` 其它
+当前正式提交没有官方逐课程回查，任何写入回执都不能归类为选课成功；每个目标只允许一次物理写入，后续应人工核对官方记录。
 
 ## 测试
 
 ```bash
 python tests/test_xk.py        # 23 项：DataTable 解析 / 空表 / 退化字段 / items 格式
 python tests/test_pwd.py       # 8 项：双 MD5 与虚构黄金向量一致
-python tests/e2e_kingo.py      # 7 项：双账号并发 → 满员重试 → 全抢到
+python tests/e2e_kingo.py      # 7 项：双账号登录 + 单目标单次提交 + 结果待核验
 python tests/test_guard.py     # 16 项：占位符拦截 / 402 熔断
 python tests/test_auto.py      # 5 项：课程匹配 + 回写 + 不误配
 python tests/test_session.py   # 27 项：cookie 落盘/恢复 + 真实 HTTP 往返 + HAR 导入 + 免重登
@@ -288,3 +288,33 @@ python tests/test_tls.py       # 10 项：TLS 校验 / 禁用远程明文 / 本�
 Windows 客户端可通过“离线工具 → 查看规范化课程 JSON（非实时）”打开。
 任何缺字段或含混余量都不会被当作可信名额；异常/空数据不会覆盖已存在的快照。
 这只是历史快照，不是实时官方状态，也不证明课程已选成功。
+
+## 2026-11-14 结果核验保护（仅本目录）
+
+青果和正方适配器的 `grab()` **不再**把“已选”“重复选课”
+或“操作成功”等写入回执当作课程选中。所有已实际发送的提交
+在缺少可信的官方逐课程回查前只返回 `unknown`，
+`GrabResult.ok` 始终为 `False`；网络/会话异常及 429 都不会被
+显示为成功。日志只保存固定分类说明，不保存原始回执正文。
+
+此更改不实现、猜测或调用新的官方已选清单接口：当前系统缺少
+已验证的只读结果接口与身份对照证据。应与跨重启意图持久化
+保护一起使用，完成官方回查验证前不得宣称已选成功。
+
+
+## 2026-11-14：跨重启防重复提交与结果待核验
+
+正式命令行执行入口 `go` 现在在发送前创建持久化提交意图：
+默认使用用户目录 `~/.kingo-assistant/intent-journal.sqlite3`
+（Windows 为对应用户主目录）；`KINGO_INTENT_DB` 可供隔离的测试环境
+指定专用路径。SQLite 原子唯一约束用于处理跨线程/进程的同目标竞态。
+只存加盐 HMAC 指纹和状态，不存学号、课程名、密码或 Cookie。
+
+如果该账号、学期和课程已经留下提交意图，程序将保护性停止，
+**不会因重启、掉线、响应文本或名额重新出现就重发**。
+本版不自动删除 pending，也不声称具备已验收的官方课程回查。
+跨模块课程号/教学班身份未统一前，不得将不同代码入口的状态
+视为同一条已核实结果。不要通过删除数据库绕过待核验状态。
+
+旧配置中的 `interval_ms` / `poll_ms` / `jitter` 仅为历史兼容字段，
+不再使本命令行执行器进行重复写入；登录/只读查询与真实写入是不同操作。
