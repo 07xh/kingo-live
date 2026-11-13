@@ -39,7 +39,9 @@
     },
     "official_verified": false,
     "account_scope": "",
-    "semester": ""
+    "semester": "",
+    "response_account_path": "",
+    "response_semester_path": ""
   },
   "clock": {
     "header": "Date",
