@@ -67,7 +67,9 @@ def main() -> int:
     cfg["account_scope"] = "fictional-test-account"
     cfg["enrollment"].update({"official_verified": True,
                               "account_scope": cfg["account_scope"],
-                              "semester": cfg["xnxq"]})
+                              "semester": cfg["xnxq"],
+                              "response_account_path": "data.account_scope",
+                              "response_semester_path": "data.semester"})
     cfg["clock"]["path"] = "/catalog"
     cfg["clock"]["samples"] = 3
     cfg["warmup"]["path"] = "/catalog"
