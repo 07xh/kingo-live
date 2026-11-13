@@ -66,13 +66,24 @@
 1. Windows 仍保留 `VerifiedGateway`、`AttemptJournal`、`run_enrollment`、
    `reconcile_pending`；桌面 GUI 尚未启用真实写入。
 2. `qiangke` 和 `ncwu` 保留原有文件与功能，没有替换成新执行器。
-3. 四套代码此前使用不同的意图记录格式；本轮**尚未统一为一份跨所有引擎的原子日记账**，
-   不能声称全局防重复已完成。禁止同时运行多套写入客户端。
+3. `qiangke/`、`ncwu/`、`kingo-live/` **实际写入前**已使用相同的
+   `qiangke.qk.intent_journal.IntentJournal` SQLite 原子闸门；原有 `kingo-live` JSONL
+   仍用于保留详细状态历史，不迁移或覆盖。默认数据库为
+   `~/.kingo-assistant/intent-journal.sqlite3`，或统一配置的 `KINGO_INTENT_DB`。
+   `kingo-live` 额外支持 `journal.shared_intent_db`，主要用于本地隔离测试。
+   如路径不同，**并不构成全局防重复**。
+   该闸门以系统主机、账号标识、学期标识、课程号计算 HMAC。三套代码必须提供完全相同、
+   且通过官方只读响应核对的身份值；例如 `2026-1` 与 `2026-2027-1`
+   **目前不会自动映射**，不能想当然认为重复检测跨学期格式成立。
+   Windows 的 `AttemptJournal` 仍是独立实现，写入功能未接通共享 SQLite；
+   因此**仍不能宣称四套执行器全面共享一个原子日记账**，也不应同时启用多个写入客户端。
 4. `kingo-live` 仅在已核验完整官方记录的条件下可进入 `confirmed`；
    不完整、延迟或无法读取的结果保留待核验。
 5. 新证据契约不能自行证实服务器内容的真实性；验证责任在具体只读适配器。
 6. 尚需完成：学校真实 read-only 响应模式测试（脱敏）、统一课程身份/学期标准、
-   跨执行器 journal 迁移与恢复、Windows 正式适配、真实只读联调验收。
+   Windows 与共享 SQLite 的持久化互操作、旧 JSONL/Windows 日志跨运行恢复，
+   Windows 正式适配、真实只读联调验收。共享 SQLite 一经保留 pending，不能因
+   JSONL 状态写成 rejected 而直接删除或绕过；必须先核对官方记录。
 
 ## 验收方法
 
