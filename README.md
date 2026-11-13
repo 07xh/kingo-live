@@ -139,3 +139,10 @@ Verification: remote blob SHA1s match local files byte-for-byte, and both
 regressions were rerun from code downloaded from the remote. No school host,
 live TLS handshake, real Chrome session, or signed POST was exercised; all
 113 fingerprint checks run against a loopback target.
+
+## 两份课程快照的离线身份核对
+
+Windows **离线工具 → 核对两份课程 JSON 的身份（非已选核验）** 可以对照
+`ncwu` 和 `qiangke` 导出的规范化课程 JSON，区分精确教学班号、
+仅课程号相同、班号缺失或可能冲突等情况；不联网、不修改志愿或提交意图。
+即使显示课程身份完全一致，也只是**两份历史快照相同**，不能证明选课成功。

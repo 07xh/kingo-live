@@ -29,6 +29,8 @@ class JsonViewerTests(unittest.TestCase):
             got = load_plan_json(self.save(root, json.dumps(rows, ensure_ascii=False)))
         self.assertEqual(len(got.rows), 2)
         self.assertEqual(got.rows[0].course_id, "000001")
+        self.assertEqual(got.offerings[0].course_id, "000001")
+        self.assertEqual(got.offerings[0].class_id, "001-02")
         self.assertEqual(got.rows[1].remaining_label, "未知")
         self.assertEqual(got.sources, ("ncwu.plan", "qiangke.table"))
         self.assertEqual(len(got.observed_at), 1)
