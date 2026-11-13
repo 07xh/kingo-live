@@ -450,6 +450,39 @@ class Journal:
                     fh.flush()
                     os.fsync(fh.fileno())
 
+    def bind_scope(self, *, account: str, term: str, school: str) -> None:
+        """Keep a JSONL journal bound to exactly one account/term/school.
+
+        This guard deliberately does not rewrite legacy fingerprints. Existing
+        unscoped nonempty journals remain available for read-only reconciliation
+        but cannot silently authorize new submissions until reviewed.
+        Only a salted HMAC of the scope is persisted beside the journal.
+        """
+        if not all(isinstance(v, str) and v.strip() for v in (account, term, school)):
+            raise RuntimeError("An explicit account, semester and school scope are required")
+        school_host = urllib.parse.urlsplit(school).netloc.lower().strip()
+        if not school_host:
+            raise RuntimeError("A valid school host is required")
+        identity = json.dumps([school_host, term.strip(), account.strip()],
+                              ensure_ascii=False, separators=(",", ":"))
+        digest = hmac.new(self.salt, identity.encode("utf-8"),
+                          hashlib.sha256).hexdigest()
+        marker = self.path.with_name(self.path.name + ".scope")
+        with Lease(str(marker) + ".lock"):
+            if marker.exists():
+                recorded = marker.read_text(encoding="ascii").strip()
+                if not hmac.compare_digest(recorded, digest):
+                    raise RuntimeError("Journal account/semester/school scope mismatch")
+                return
+            if self.path.exists() and self.path.stat().st_size:
+                raise RuntimeError(
+                    "Unscoped legacy journal has existing records; reconcile manually")
+            fd = os.open(marker, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(fd, "w", encoding="ascii") as fh:
+                fh.write(digest + "\n")
+                fh.flush()
+                os.fsync(fh.fileno())
+
     def fp(self, value: str) -> str:
         return hmac.new(self.salt, value.encode(), hashlib.sha256).hexdigest()[:24]
 
@@ -910,6 +943,10 @@ class Engine:
         """Ordered failover chain. No target is ever retried in one run."""
         if not confirm:
             raise RuntimeError("real submission requires --confirm")
+        self.journal.bind_scope(
+            account=self.cfg.get("account_scope", ""),
+            term=self.cfg.get("xnxq", ""),
+            school=self.cfg.get("base_url", ""))
         prebuilt = self._prebuild_bodies()
         results: List[Attempt] = []
         self.planner.history = []
@@ -1014,7 +1051,11 @@ class Engine:
                 if isinstance(row, (list, tuple)):
                     return str(row[idx]) if isinstance(idx, int) and idx < len(row) else ""
                 return ""
-            seen[self.journal.fp(f"{g('course_id')}|{g('class_id')}")] = g('course_id')
+            course_id, class_id = g('course_id').strip(), g('class_id').strip()
+            if not course_id or not class_id:
+                # An incomplete official record cannot prove a class-level write.
+                continue
+            seen[self.journal.fp(f"{course_id}|{class_id}")] = course_id
         confirmed = rejected = 0
         for fp in pending:
             if fp in seen:
