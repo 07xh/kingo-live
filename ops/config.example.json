@@ -47,6 +47,49 @@
       "session_reuse": true
     }
   },
+  "endpoints": {
+    "base_path": "/hsjw/wap/mycourseschedule.action",
+    "channels": ["wap", "web", "api"],
+    "suffixes": [".action", ".do"],
+    "double_slash": true,
+    "json_channel": true,
+    "window_param": "xnxq",
+    "window_value": "2026-2027-1",
+    "independent_entrance": false,
+    "concurrency": 1
+  },
+  "preflight": {
+    "ticket_names": ["token", "csrf", "csrfmiddlewaretoken", "__VIEWSTATE", "lt", "execution", "hidOption", "xktype", "lcid"],
+    "ticket_ttl_s": 300.0,
+    "body_template": {"xktype": "N", "sfbd": "0"},
+    "sessions": 3,
+    "spare_connections": 1,
+    "backend_nodes": ["TARGET_NODE_1", "TARGET_NODE_2"],
+    "lead_ms": 30.0,
+    "spin_ms": 20.0,
+    "cpu_affinity": -1,
+    "early_data_for_write": false,
+    "prebuild": false
+  },
+  "crosscheck": {
+    "channels": {"official_list": 1.0, "wap_schedule": 0.8, "credit_summary": 0.6, "zxxq": 0.5},
+    "stale_penalty": 0.3,
+    "confirm_threshold": 1.2,
+    "all_read_only": true
+  },
+  "signature": {
+    "host": "api.xiqueer.com",
+    "path": "/manager//wap/wapController.jsp",
+    "signed_fields": ["xqerSign", "encrptSecretKey", "param", "param2", "token"],
+    "change_only": ["kcid", "skbj"],
+    "apk": "TARGET_APK",
+    "class": "TARGET_CLASS",
+    "method": "TARGET_METHOD",
+    "kcid": "TARGET_COURSE_ID",
+    "skbj": "TARGET_CLASS_ID",
+    "hook_output": "TARGET_HOOK_PATH",
+    "no_production_replay": true
+  },
   "strategy": {
     "concurrency": 1,
     "sessions": 1,

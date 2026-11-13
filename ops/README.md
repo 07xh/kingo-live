@@ -1,6 +1,8 @@
-# ops/ — 只读侦察 + 名额事件驱动 + 服务端规则判定 + 指纹一致性
+# ops/ — 只读侦察 + 事件驱动 + 规则判定 + 指纹一致性 + 端点/预检/核验
 
-五个独立模块，**不改动** `clients/windows/source/`、`kingo-live/`、`qiangke/`、`ncwu/` 四套现有实现。零第三方依赖，Python 3.10+，标准库。
+九个独立模块，**不改动** `clients/windows/source/`、`kingo-live/`、`qiangke/`、`ncwu/` 四套现有实现。零第三方依赖，Python 3.10+，标准库。
+
+**不变式（全部模块）**：默认只读；单目标一次物理提交；`HTTP 200 ≠ 成功`；未知结果写 `pending` 走官方回查；凭据只从 `KINGO_COOKIE` 注入，报告里不出现值。
 
 | 文件 | 职责 | 对应上一轮分析的面 |
 |---|---|---|
@@ -9,8 +11,11 @@
 | `p5_probe.py` | 受控观测 → 分配规则 `fcfs/random/priority` 与限流维度 `ip/session/account/node` 判定 → 具体策略值 | #1 #2 |
 | `fingerprint.py` | HAR 脱敏基线（有序 Header、伪头剥离、URL 令牌清洗）、ClientHello→JA3、有序重放、差异判定、门槛评估 | #14 #4 #8 |
 | `fingerprint_bridge.py` | CDP 真实浏览器通道（最小 WebSocket 客户端，无第三方依赖）+ mitmproxy 注入 addon | #14 #5 |
-| `test_ops.py` | 回环 HTTP 靶标上的 65 项离线回归 | 验证 |
-| `test_fingerprint.py` | 回环靶标上的 113 项指纹回归 | 验证 |
+| `endpoints.py` | wap/web/api 通道 × `.action`/`.do` × 双斜杠 × JSON 端点矩阵；按 status/类型/限流头/窗口标记聚类判独立入口；窗口判定归属 | #4 #6 |
+| `preflight.py` | 一次性票据池、body 预序列化、连接分片与 TLS 会话计划、QPC 高精度等待与绑核 | #7 #8 #9 |
+| `crosscheck.py` | 已选名单 / wap 课表 / 学分 / `zxxq` 四通道加权融合，避免把真成功读成 `pending` | #13 |
+| `signature.py` | 移动端签名通道的 jadx/smali 构造点定位 + Frida 钩点模板（只改 `kcid`/`skbj`，不碰签名） | #5 |
+| `test_ops.py` / `test_fingerprint.py` / `test_phase2.py` | 65 + 113 + 182 项离线回归 | 验证 |
 
 ## 跑起来
 
@@ -18,10 +23,15 @@
 cd ops
 python test_ops.py -v                 # 65/65 OK
 python test_fingerprint.py -v         # 113/113 OK
+python test_phase2.py                 # 182/182 OK（含回环 HTTP 靶标）
 python p5_probe.py                    # 打印规则判定示例
 python seat_events.py                 # quiet -> submit -> duplicate blocked
 python fingerprint.py --demo          # 差异判定 + 门槛判定示例
 python fingerprint_bridge.py --selftest
+python endpoints.py --demo            # 16 端点矩阵 -> 独立入口 + 窗口归属
+python preflight.py --demo            # 票据池 / 预构造 / 分片 / 高精度等待
+python crosscheck.py --demo           # confirmed / contradicted / pending
+python signature.py --demo            # jadx 定位 + Frida 钩点模板
 
 # 只读侦察（不接触任何写接口）
 export KINGO_COOKIE='<登录后 F12 任一请求的 Cookie 头>'
@@ -138,4 +148,50 @@ python fingerprint_bridge.py --cdp http://127.0.0.1:9222 \
 - 两个模块默认只读；任何非 `GET/HEAD/OPTIONS` 需显式 `allow_write=True`，CDP 与 addon 同样执行。
 - `test_fingerprint.py` 的 113 项全部在**本机回环靶标**上跑：验证 Header 顺序、脱敏、JA3 解析、门槛判定、写保护、addon 逻辑。**没有**连学校主机、没有真 TLS 握手、没有真 Chrome 会话、没有签名 POST。
 - 真实 HAR、真实 ClientHello、真实 `raw_status/browser_status` 仍是 `TARGET_*` 占位符；拿到后按上面 4 步回填，判据不变。
-- `#5` 的 Frida 钩点 / jadx 签名函数定位**本轮未做**：签名通道在出口改不动，必须先定位参数构造点，属下一轮独立工作。
+- `#5` 的 Frida 钩点 / jadx 签名函数定位已由 `signature.py` 落地为**静态定位 + 钩点模板**；仍缺真实 APK、真实类名/方法名与实机验签，不写成已验证。
+
+---
+
+## 第二轮：#4 #5 #6 #7 #8 #9 #13
+
+| 面 | 模块 | 已实现 | 仍缺实机数据 |
+|---|---|---|---|
+| #4 通道与端点 | `endpoints.py` | 16 端点矩阵、只读探测、四维聚类、独立入口判据、单入口推荐 | 真实 `catalog/submit/enrollment` 路径与限流头 |
+| #6 窗口判定归属 | `endpoints.py` | `client_param / session_state / js_side / server_time / unknown` 五分类 + 置信度 + 下一步 | 学期/轮次参数与无 Cookie 对照样本 |
+| #7 票据与令牌 | `preflight.py` | 隐藏域提取（属性顺序无关）、一次性消费、TTL、脱敏报告、body 预序列化 | 票据是否绑定提交时刻 |
+| #8 传输层位次 | `preflight.py` | 每会话 1 条 keep-alive + 备用节点、DNS 预解析、TLS ticket/ALPN 计划、**写请求禁用 0-RTT** | 真 TLS 握手与 HTTP/2 复用实测 |
+| #9 本机调度抖动 | `preflight.py` | QPC 分辨率、绑核/优先级（best-effort）、`wait_until` 分段 sleep + yield-spin；秒相位复用 `recon.probe_clock` | 真机抖动分布 |
+| #13 交叉核验 | `crosscheck.py` | 四通道加权融合、滞后读降权、冲突检测、pending 意图 → 一个 Decision | 各通道真实延迟与缓存时长 |
+| #5 移动端签名 | `signature.py` | smali/java/kt 构造点扫描 + 排序、Frida 钩点模板（只改 `kcid`/`skbj`）、策略与死局判据 | 真实 APK、类名、验签响应 |
+
+### 数值与判据
+
+| 参数 | 主值（范围） | 依据 / 判据 |
+|---|---|---|
+| 端点矩阵规模 | 16（8–32） | 3 通道 × 2 后缀 + 双斜杠 + JSON + 参数组去重；`classify.divergent=true` 才继续 |
+| 独立入口判据 | `rate_buckets≥2` 或 `window_markers≥2` | 不同限流桶 / 不同窗口标记 = 不同后端或不同校验链 |
+| 窗口归属置信 | 0.85 / 0.75 / 0.70 / 0.60 / 0.20 | 参数敏感 / 会话敏感 / 全关闭 / JS 分支 / 证据不足 |
+| 票据 TTL | 300 s（60–600） | 窗口外预取；过期或已消费绝不复用 |
+| `lead_ms` | 30（10–80） | 覆盖一次目录读 + 已预构造 body 的发送，不覆盖握手 |
+| 连接分片 | 每会话 1 条 + 1 备用 | 备用节点不复用 TLS session；`concurrency` 仍锁 1 |
+| 通道权重 | 1.0 / 0.8 / 0.6 / 0.5 | 已选名单 / wap 课表 / 学分 / `zxxq`；滞后读再乘 0.30 |
+| 确认阈值 | `positive≥1.20` 且 ≥2 个非滞后通道 | 单通道滞后否定**不能**把真成功变 `pending` |
+| Frida 改写字段 | 仅 `kcid`、`skbj` | `xqerSign` 覆盖 `param/param2/token`，出口改写必废签名 |
+
+### 关键判据表
+
+| 观测 | 结论 | 动作 |
+|---|---|---|
+| 变体出现不同 `X-RateLimit-*` / `Server-Timing` / `prohibit` | 存在独立入口 | 只选 1 条通道深入测，不并发扇出 |
+| 同一会话换学期参数 → 窗口标记变化 | 窗口判定吃客户端输入 | 验证服务端是否二次硬校验，不得直接构造越窗请求 |
+| 名单滞后 `present=false` + 课表/学分 `present=true` | 真成功被缓存误读 | `verdict=confirmed`，意图终止，绝不重提 |
+| 名单新鲜否定 + 其他通道肯定 | 证据冲突 | `human_check`，停机不猜 |
+| 签名 POST 的构造点出现 `kcid/skbj put()` | 可让 App 自己签发 | hook 构造点，签名出口一字不改 |
+| 签名含时间戳 + 设备指纹且服务端校验 | #5 失效 | 转 #4/#12，不再投入 |
+
+### 边界与实测缺口
+
+- 四个新模块全部**纯离线**：`endpoints.py` 的实机探测需显式 `--host`，且只发 GET；`signature.py` 只做静态扫描，不执行 Frida、不发请求、不还原签名算法；`crosscheck.py` 不发网络请求。
+- `test_phase2.py` 的 182 项含一个真实回环 HTTP 靶标（16 端点、3 种响应形状），验证聚类、限流头、窗口标记与推荐；**没有**连学校主机、没有真 APK、没有真 Chrome、没有真 TLS 握手。
+- `#10`（同网段物理位次）、`#11`（条件竞争超发）**刻意未实现**：#10 是部署动作不是代码；#11 破坏意图幂等、高方差，只在确认服务端无事务锁后单独评估。
+- 所有真实端点、轮次参数、类名方法名、票据名仍为 `TARGET_*`；拿到 HAR / APK 后按 `config.example.json` 回填，判据不变。
