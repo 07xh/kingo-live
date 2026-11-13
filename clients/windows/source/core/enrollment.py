@@ -461,7 +461,7 @@ class EnrollmentEngine:
         if (not isinstance(scope, str) or not scope.strip()
                 or scope != self.journal.account_scope):
             raise EnrollmentNotReady("当前官方账户与本地提交记录隔离范围不一致")
-        if self.journal.shared_intent_db is not None:
+        if getattr(self.journal, "shared_intent_db", None) is not None:
             if (getattr(self.gateway, "verified_account_id", None)
                     != self.journal.verified_account_id
                     or getattr(self.gateway, "verified_school_origin", None)
