@@ -144,10 +144,16 @@ class HardeningTests(unittest.TestCase):
         valid = SimpleNamespace(source="ncwu.plan", course_id="C1",
                                 class_id="01", course_name="Course",
                                 remaining=3, observed_at=None)
-        self.assertEqual([x.kind for x in monitor.observe([valid])], ["new"])
+        # Unknown -> known is a baseline clarification, not a release.
+        self.assertEqual(monitor.observe([valid]), [])
+        increased = SimpleNamespace(source="ncwu.plan", course_id="C1",
+                                    class_id="01", course_name="Course",
+                                    remaining=4, observed_at=None)
+        self.assertEqual([x.kind for x in monitor.observe([increased])],
+                         ["increased"])
         self.assertEqual(monitor.observe([]), [])
         self.assertEqual(monitor.observe([normalized]), [])
-        self.assertEqual(monitor.observe([valid]), [])
+        self.assertEqual(monitor.observe([increased]), [])
         self.assertEqual(len(monitor.snapshot), 1)
         self.assertIsNone(offering_bridge.normalize_readonly(
             SimpleNamespace(course_id="C1", class_id=None,
