@@ -78,13 +78,15 @@ class SubmissionTests(unittest.TestCase):
 
     def test_unknown_stops_worker_without_retry_or_success_notification(self):
         ad = self.adapter(KingoAdapter)
-        eng = Engine({'policy': {'max_seconds': .02, 'interval_ms': 1,
-                                'backoff_cap_ms': 1, 'jitter': 0}}, Log())
+        eng = Engine({'system': {'base_url': 'https://example.invalid',
+                                 'xnxq': 'TEST-TERM'},
+                      'policy': {'max_seconds': .02, 'interval_ms': 1,
+                                 'backoff_cap_ms': 1, 'jitter': 0}}, Log())
         with tempfile.TemporaryDirectory() as td:
             with patch.dict(os.environ, {'KINGO_INTENT_DB': os.path.join(td, 'intents.sqlite3')}):
                 with patch.object(ad, 'grab', return_value=GrabResult(False, 'unknown', 'uncertain')) as grab:
                     with patch.object(eng.notifier, 'hit') as hit:
-                        eng._worker(ad, {'name': 'fictional'})
+                        eng._worker(ad, {'name': 'fictional', 'xkid': 'CLASS-01'})
         self.assertEqual(grab.call_count, 1)
         hit.assert_not_called()
         self.assertEqual(len(eng.results), 1)

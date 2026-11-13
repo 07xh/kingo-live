@@ -49,10 +49,46 @@ class JournalTests(unittest.TestCase):
             self.assertEqual(outcomes.count(True), 1)
             self.assertEqual(outcomes.count(False), 5)
 
+    def test_class_identity_ignores_display_names_and_other_course_fields(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = IntentJournal(Path(tmp) / "intents.sqlite3")
+            args = {"school": "https://example.invalid/hsjw", "account": "fictional",
+                    "term": "TEST-TERM"}
+            self.assertTrue(store.reserve(**args, course=TARGET))
+            renamed = {**TARGET, "name": "Renamed", "teacher": "Different",
+                       "kch_id": "DIFFERENT"}
+            self.assertFalse(store.reserve(**args, course=renamed))
+            self.assertFalse(store.reserve(**args, course={"jxb_ids": "CLASS-01"}))
+            self.assertTrue(store.reserve(**{**args, "term": "OTHER-TERM"}, course=TARGET))
+
+    def test_missing_term_or_class_never_reserves(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = IntentJournal(Path(tmp) / "intents.sqlite3")
+            args = {"school": "https://example.invalid", "account": "fictional",
+                    "term": "TEST-TERM", "course": TARGET}
+            for delta in ({"school": ""}, {"school": "unknown"}, {"account": ""},
+                          {"term": ""}, {"term": "unknown"},
+                          {"course": {"name": "Display only"}},
+                          {"course": {"xkid": "A", "jxb_ids": "B"}}):
+                with self.subTest(delta=delta), self.assertRaises(ValueError):
+                    store.reserve(**{**args, **delta})
+
+    def test_engine_missing_term_or_class_sends_no_write(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.dict(os.environ, {"KINGO_INTENT_DB": str(Path(tmp) / "intents.sqlite3")}):
+                adapter = Mock()
+                adapter.acct = {"user": "fictional", "name": "fictional"}
+                adapter.blocked = False
+                cfg = {"system": {"base_url": "https://example.invalid"}, "policy": {}}
+                Engine(cfg, Mock())._worker(adapter, TARGET)
+                cfg["system"]["xnxq"] = "TEST-TERM"
+                Engine(cfg, Mock())._worker(adapter, {"name": "Display only"})
+                adapter.grab.assert_not_called()
+
     def test_engine_restart_must_not_send_second_write(self):
         with tempfile.TemporaryDirectory() as tmp:
             with patch.dict(os.environ, {"KINGO_INTENT_DB": str(Path(tmp) / "intents.sqlite3")}):
-                cfg = {"system": {"base_url": "https://example.invalid"}, "policy": {}}
+                cfg = {"system": {"base_url": "https://example.invalid", "xnxq": "TEST-TERM"}, "policy": {}}
                 adapter = Mock()
                 adapter.acct = {"user": "fictional", "name": "fictional"}
                 adapter.blocked = False

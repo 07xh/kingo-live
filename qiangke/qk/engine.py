@@ -123,6 +123,20 @@ class Engine:
                 pass  # 最后 20ms 忙等，保证触发精度
         self.log.ok("开抢")
 
+    def _intent_term(self) -> str:
+        """Canonicalize semester values before reserving a physical write."""
+        value = self.opts.get("xnxq") or self.cfg.get("xnxq") or self.opts.get("semester")
+        if isinstance(value, dict):
+            year, term = value.get("year"), value.get("term")
+            if any(v is None or isinstance(v, bool) for v in (year, term)):
+                raise ValueError("学期必须包含学年和学期编号")
+            if not str(year).strip() or not str(term).strip():
+                raise ValueError("学期编号不能为空")
+            return f"{str(year).strip()}/{str(term).strip()}"
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        raise ValueError("缺少明确学期标识")
+
     def _worker(self, ad, course):
         """At most one real write for a durable account/term/course intent.
 
@@ -140,10 +154,9 @@ class Engine:
         try:
             journal = IntentJournal(db_path)
             reserved = journal.reserve(
-                school=str(self.opts.get("base_url") or self.opts.get("type") or "unknown"),
+                school=str(self.opts.get("base_url") or "unknown"),
                 account=str(ad.acct.get("user") or ""),
-                term=str(self.opts.get("xnxq") or self.opts.get("semester")
-                         or self.cfg.get("xnxq") or ""),
+                term=self._intent_term(),
                 course=course,
             )
         except (OSError, ValueError, sqlite3.Error) as exc:
