@@ -124,6 +124,39 @@ class IntentHTTPTests(selftest.LiveHTTPTests):
         finally:
             eng.close()
 
+    def test_exact_readback_does_not_accept_course_only_or_other_class(self):
+        eng = lc.Engine(self.cfg(), self.rec('_identity'))
+        try:
+            expected = lc.Offering('C001', 'T01', 1)
+            self.state.enrolled = [{'kcid': 'C001', 'skbj': ''}]
+            matched, _ = eng._readback(eng.transports[0], expected)
+            self.assertFalse(matched)
+            self.state.enrolled = [{'kcid': 'C001', 'skbj': 'T02'}]
+            matched, _ = eng._readback(eng.transports[0], expected)
+            self.assertFalse(matched)
+            self.state.enrolled = [{'kcid': 'C001', 'skbj': 'T01'}]
+            matched, _ = eng._readback(eng.transports[0], expected)
+            self.assertTrue(matched)
+            matched, result = eng._readback(
+                eng.transports[0], lc.Offering('C001', '', 1))
+            self.assertFalse(matched)
+            self.assertIn('missing_teaching_class', result.error)
+        finally:
+            eng.close()
+
+    def test_no_physical_submit_when_catalog_class_missing(self):
+        cfg = self.cfg()
+        cfg['targets'][0]['class_id'] = ''
+        self.state.catalog_rows[0]['skbj'] = ''
+        eng = lc.Engine(cfg, self.rec('_classless'))
+        try:
+            out = eng.enroll(confirm=True)
+            self.assertEqual(self.state.submit_count, 0)
+            self.assertFalse(any(x.success for x in out))
+            self.assertFalse(eng.journal.pending_fingerprints())
+        finally:
+            eng.close()
+
     def test_empty_readback_does_not_release_pending_intent(self):
         self.state.empty_readback = True
         eng = lc.Engine(self.cfg(), self.rec())
