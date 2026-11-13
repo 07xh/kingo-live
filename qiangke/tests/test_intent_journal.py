@@ -49,24 +49,58 @@ class JournalTests(unittest.TestCase):
             self.assertEqual(outcomes.count(True), 1)
             self.assertEqual(outcomes.count(False), 5)
 
-    def test_class_identity_ignores_display_names_and_other_course_fields(self):
+    def test_course_id_fences_all_teaching_class_hints(self):
         with tempfile.TemporaryDirectory() as tmp:
             store = IntentJournal(Path(tmp) / "intents.sqlite3")
             args = {"school": "https://example.invalid/hsjw", "account": "fictional",
                     "term": "TEST-TERM"}
             self.assertTrue(store.reserve(**args, course=TARGET))
             renamed = {**TARGET, "name": "Renamed", "teacher": "Different",
-                       "kch_id": "DIFFERENT"}
+                       "xkid": "CLASS-02"}
             self.assertFalse(store.reserve(**args, course=renamed))
-            self.assertFalse(store.reserve(**args, course={"jxb_ids": "CLASS-01"}))
+            # Different canonical course IDs are not confused even if a class
+            # code such as "001" is reused by different classes.
+            other_course = {**TARGET, "kch_id": "DIFFERENT"}
+            self.assertTrue(store.reserve(**args, course=other_course))
             self.assertTrue(store.reserve(**{**args, "term": "OTHER-TERM"}, course=TARGET))
-            # Legacy NCWU can fence an ambiguous course without a class:
-            # it must not generate extra writes after display text changes.
+            self.assertTrue(store.reserve(**{**args, "account": "other-user"}, course=TARGET))
             only_code = {"kch_id": "COURSE-001", "name": "Before"}
             self.assertTrue(store.reserve(**args, course=only_code))
-            self.assertFalse(store.reserve(**args, course={**only_code, "name": "After"}))
-            # NCWU optional skbjdm=None is historically stringified by argparse.
-            self.assertFalse(store.reserve(**args, course={"kch_id": "COURSE-001", "xkid": "None"}))
+            self.assertFalse(store.reserve(**args, course={**only_code, "name": "After",
+                                                           "xkid": "002"}))
+            self.assertFalse(store.reserve(**args, course={"kch_id": "COURSE-001",
+                                                           "xkid": "None"}))
+
+    def test_missing_class_vs_explicit_class_share_ncwu_intent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = IntentJournal(Path(tmp) / "intents.sqlite3")
+            args = {"school": "https://example.invalid/hsjw", "account": "fictional",
+                    "term": "2026-1"}
+            # hs_xk.py may omit --skbjdm while hs_sniper supplies a hint.
+            self.assertTrue(store.reserve(**args, course={"kch_id": "NCWU-101",
+                                                           "xkid": "None"}))
+            self.assertFalse(store.reserve(**args, course={"kch_id": "NCWU-101",
+                                                            "xkid": "002"}))
+
+    def test_older_class_fingerprint_still_prevents_replay(self):
+        import hashlib
+        import hmac
+        import json
+        import sqlite3
+        with tempfile.TemporaryDirectory() as tmp:
+            store = IntentJournal(Path(tmp) / "intents.sqlite3")
+            identity = json.dumps(["example.invalid", "fictional", "2026-1",
+                                   "class", "002"], ensure_ascii=False,
+                                  separators=(",", ":"))
+            legacy_fp = hmac.new(store.salt, identity.encode("utf-8"),
+                                 hashlib.sha256).hexdigest()
+            with sqlite3.connect(store.path) as db:
+                db.execute("INSERT INTO attempts (fingerprint, state) VALUES (?, ?)",
+                           (legacy_fp, "pending"))
+            self.assertFalse(store.reserve(school="https://example.invalid",
+                                           account="fictional", term="2026-1",
+                                           course={"kch_id": "NCWU-101",
+                                                   "xkid": "002"}))
 
     def test_missing_term_or_class_never_reserves(self):
         with tempfile.TemporaryDirectory() as tmp:
