@@ -99,7 +99,8 @@
     "database": "kingo-budget.sqlite"
   },
   "journal": {
-    "path": "kingo-intents.jsonl"
+    "path": "kingo-intents.jsonl",
+    "shared_intent_db": ""
   },
   "strategy": {
     "poll_interval_ms": 60000,
