@@ -40,6 +40,7 @@ class IntentHTTPTests(selftest.LiveHTTPTests):
                 self.state.reset()
                 cfg = self.cfg()
                 cfg['journal']['path'] += class_id or 'wildcard'
+                cfg["journal"]["shared_intent_db"] = cfg["journal"]["path"] + ".sqlite3"
                 cfg['targets'][0]['class_id'] = class_id
                 cfg['targets'].append({'course_id': 'C002', 'class_id': 'T02'})
                 eng = lc.Engine(cfg, self.rec())
