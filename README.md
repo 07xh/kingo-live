@@ -1,4 +1,4 @@
-# kingo-live
+# KingoAssistant · private integration
 
 Technical research repository: a real HTTP client for the Kingo/NCWU course-enrollment flow, plus an offline latency simulator used to derive and falsify its conclusions.
 
@@ -32,3 +32,28 @@ Zero third-party dependencies, Python 3.10+. See `kingo-live/README.md` for the 
 All verification so far runs against loopback HTTP targets and offline simulation. **No request has been sent to a real enrollment system.** The remaining gap is the real schema (`--probe` body or a browser HAR) and a real session. Submission requires an explicit `--confirm` and success is only counted after an official enrollment-list readback.
 
 Cookie is injected through the `KINGO_COOKIE` environment variable; it is never written to disk or to this repository.
+
+## Consolidated Windows client (offline/readonly integration)
+
+The historical Windows Tk desktop source and tests from
+[07xh/kingo-assistant](https://github.com/07xh/kingo-assistant)
+at commit `2ab31adb212d134be0ec050d9404d2a7a4dac4d7`
+are preserved in `clients/windows/source/` in this **private** repository.
+
+- Start: `cd clients/windows/source && python windows_gui.py`
+- Main UI: plans, read-only monitor, offline demo, official-site appointment, tray.
+- **New integration:** Tools → "Kingo Live HAR 证据交叉核验（离线）".
+  This invokes the same repository's `kingo-live/har_to_schema.py` through
+  `core/kingo_live_bridge.py` and displays numeric evidence counts only.
+- No cookies, HAR contents, response bodies, query strings, course IDs or
+  student identities are displayed by the integrated tool.
+- The live HTTP submission module is **not imported** into the Windows GUI.
+  The existing school-specific write adapter is intentionally absent and
+  the GUI's automatic-submit start remains disabled.
+- Source CI additionally runs native Windows Tk tests and bundles the shared
+  offline analyzer as a PyInstaller data file. Only passing CI plus an
+  actual Windows test can establish whether the executable launches.
+- Original CLI research code and its loopback tests remain in `kingo-live/`.
+  Real NCWU permissions, endpoints, and live submissions are not verified.
+
+See `docs/integration-windows-readonly.md` for scope and verification.
