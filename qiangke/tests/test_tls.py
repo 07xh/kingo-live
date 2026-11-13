@@ -42,6 +42,13 @@ def main() -> int:
         "禁止远程明文 HTTP": rejects(
             lambda: Session(base_url="http://example.invalid", verify_tls=True)),
         "本机 mock HTTP 可用": mock.base_url.startswith("http://127.0.0.1"),
+        "不允许绝对 URL 绕过": rejects(
+            lambda: mock.get("http://example.invalid")),
+        "不允许不安全重定向": rejects(
+            lambda: next(h for h in mock.opener.handlers
+                         if type(h).__name__ == "_SecureRedirectHandler"
+                        ).redirect_request(None, None, 302, "Found", {},
+                                           "http://example.invalid")),
         "本机 mock HTTPS 可显式关闭验证": not tls_context(local_https).check_hostname,
         "青果适配器使用安全默认": tls_context(kingo.make_session(
             "https://example.invalid")).check_hostname,
