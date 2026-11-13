@@ -68,6 +68,11 @@ import threading
 import time
 import urllib.parse
 import urllib.request
+import sqlite3
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from qiangke.qk.intent_journal import IntentJournal
 
 BASE = "https://jwmis.ncwu.edu.cn/hsjw"
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -580,6 +585,32 @@ class Sniper:
         return len(self.pool)
 
     def fire(self, kcdm, skbjdm="", conc=None, tj=None):
+        # This standalone engine cannot infer success from HTTP 200 or a count.
+        # A current, official open-window indication and durable intent are
+        # required before the sole physical submission.
+        gate = self.gate_info or {}
+        if (str(gate.get("status")) != "200"
+                or str((gate.get("result") or {}).get("isValidTimerange")) != "1"):
+            log("保护", "官方选课时间窗未确认开放，未发送提交", "31")
+            return None
+        if not all(str(x or "").strip() for x in (
+                getattr(self, "xh", ""), getattr(self, "xn", ""), getattr(self, "xq", ""))):
+            log("保护", "缺少经接口确认的账号或学期，未发送提交", "31")
+            return None
+        path = (os.environ.get("KINGO_INTENT_DB")
+                or Path.home() / ".kingo-assistant" / "intent-journal.sqlite3")
+        try:
+            reserved = IntentJournal(path).reserve(
+                school="https://jwmis.ncwu.edu.cn",
+                account=str(self.xh), term=f"{self.xn}-{self.xq}",
+                course={"kch_id": str(kcdm), "xkid": str(skbjdm)},
+            )
+        except (OSError, ValueError, sqlite3.Error) as exc:
+            log("保护", f"提交记录无法持久化：{type(exc).__name__}，未发送请求", "31")
+            return None
+        if not reserved:
+            log("保护", "该课程存在待核验的历史提交，禁止跨重启重发", "31")
+            return None
         conc = 1  # A target gets one physical write; parallel duplicates are unsafe.
         # tj（允许调剂）建议开 1：items 里只有 kcdm 没有 skbjdm，
         # 说明班次是服务端按「限选人数 + 调剂」自己分配的。开 1 等于
