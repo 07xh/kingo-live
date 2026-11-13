@@ -220,7 +220,9 @@ class TestOrchestrator(unittest.TestCase):
         self.assertEqual(d3.kind, "duplicate")
 
     def test_executor_failure_marks_pending(self):
+        calls = []
         def bad(_t):
+            calls.append(_t)
             raise OSError("socket down")
         o = orch.Orchestrator(self._mission(executor=bad))
         o.phase = orch.Phase("watch")
@@ -231,12 +233,32 @@ class TestOrchestrator(unittest.TestCase):
         out = o.act(d2)
         self.assertFalse(out["acted"])
         self.assertIn("OSError", out["error"])
+        again = o.act(d2)
+        self.assertFalse(again["acted"])
+        self.assertEqual(len(calls), 1)  # unknown delivery never replays callback
         ev = [Evidence("official_list", "C1", "01", True, 60.0, False,
                        "official", time.time())]
         verdicts = o.verify(ev)
         self.assertTrue(any(v.get("verdict") == "confirmed"
                             for v in verdicts if "verdict" in v)
                         or verdicts)
+
+    def test_classless_target_cannot_reach_executor(self):
+        calls = Collector()
+        mission = orch.Mission(host="loopback",
+                               targets=[{"course_id": "C1", "class_id": "",
+                                         "priority": 1}], executor=calls)
+        o = orch.Orchestrator(mission)
+        o.phase = orch.Phase("watch")
+        o.watch(orch.SimpleResponse(200, {}, "", 5.0),
+                lambda _: [Offering("C1", "01", 60, 0)])
+        decision = o.watch(orch.SimpleResponse(200, {}, "", 5.0),
+                           lambda _: [Offering("C1", "01", 60, 2)])
+        self.assertEqual(decision.kind, "submit")
+        result = o.act(decision)
+        self.assertFalse(result["acted"])
+        self.assertIn("teaching-class", result["reason"])
+        self.assertEqual(calls.count, 0)
 
     def test_recon_probe_readonly_matrix(self):
         seen: List[str] = []
