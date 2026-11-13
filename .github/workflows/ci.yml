@@ -27,6 +27,9 @@ jobs:
       - name: Compile
         shell: bash
         run: python -m py_compile kingo-live/*.py bench/*.py ncwu/*.py qiangke/run.py qiangke/qk/*.py qiangke/qk/adapters/*.py qiangke/tests/*.py
+      - name: Shared read-only offering contract (offline)
+        shell: bash
+        run: python -m unittest discover -s contracts/tests -q
       - name: Course-plan parser regressions (offline)
         shell: bash
         run: python -m unittest discover -s ncwu/tests -q

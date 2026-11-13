@@ -84,3 +84,11 @@ cookies or response contents. No extra polling request is added.
 Historical design and acceptance material from the public Windows predecessor
 is archived in [docs/legacy-kingo-assistant](docs/legacy-kingo-assistant/README.md).
 Those files are **past-state evidence**, not current school acceptance.
+
+## Unified read-only course data contract (v1)
+
+`contracts/offering.py` provides pure, non-network normalization of course
+records from `ncwu/`, `qiangke/` and the Windows read-only client. The
+contract never infers missing seat counts or claims current availability;
+existing adapters remain unchanged until compatible consumers are verified.
+See [contract and rollout](docs/architecture/course-offering-contract-v1.md).
