@@ -31,17 +31,40 @@ class IntentJournal:
             os.chmod(self.path, 0o600)
 
     def _fingerprint(self, *, school: str, account: str, term: str, course: dict) -> str:
-        if not account.strip():
-            raise ValueError("账户标识为空，拒绝创建提交意图")
-        course_identity = str(course.get("kch_id") or course.get("name") or "").strip()
-        class_identity = str(course.get("xkid") or course.get("jxb_ids") or "").strip()
-        if not (course_identity or class_identity):
-            raise ValueError("目标课程标识为空，拒绝提交")
-        # Teacher labels may change without changing the registered course.
-        # Do not let a cosmetic edit create a new submission identity.
-        school_id = urlsplit(school).netloc or school
-        identity = json.dumps([school_id.strip().lower(), account.strip(), term.strip(),
-                               course_identity, class_identity],
+        """Stable per-teaching-class deduplication; labels never authorize replay."""
+        if not all(isinstance(v, str) for v in (school, account, term)):
+            raise ValueError("提交意图身份格式错误")
+        school_id = (urlsplit(school).netloc or school).strip().lower()
+        account_id, term_id = account.strip(), term.strip()
+        if school_id in ("", "unknown", "none", "-"):
+            raise ValueError("缺少可信教务系统标识")
+        if not account_id:
+            raise ValueError("缺少账户标识")
+        if term_id.lower() in ("", "unknown", "none", "-"):
+            raise ValueError("缺少明确学期标识")
+        if not isinstance(course, dict):
+            raise ValueError("目标课程必须是字典")
+        class_a, class_b = course.get("xkid"), course.get("jxb_ids")
+        if any(v is not None and (isinstance(v, bool) or not isinstance(v, (str, int)))
+               for v in (class_a, class_b)):
+            raise ValueError("教学班号格式不可信")
+        class_a, class_b = str(class_a or "").strip(), str(class_b or "").strip()
+        if class_a and class_b and class_a != class_b:
+            raise ValueError("教学班号字段冲突，禁止提交")
+        class_id = class_a or class_b
+        raw_course = course.get("kch_id") or course.get("kcdm")
+        if raw_course is not None and (isinstance(raw_course, bool)
+                                       or not isinstance(raw_course, (str, int))):
+            raise ValueError("课程代码格式不可信")
+        course_code = str(raw_course or "").strip()
+        # Some legacy read-only NCWU adapters cannot determine a teaching
+        # class. Conservatively fence the *whole course* in that case.
+        # Qiangke's write engine additionally requires an explicit class ID.
+        target = ("class", class_id) if class_id else ("course", course_code)
+        if not target[1] or target[1].lower() in ("unknown", "none", "-"):
+            raise ValueError("缺少稳定的课程代码或教学班号")
+        # Do not include cosmetic display name / teacher in this identity.
+        identity = json.dumps([school_id, account_id, term_id, *target],
                               ensure_ascii=False, separators=(",", ":"))
         return hmac.new(self.salt, identity.encode("utf-8"), hashlib.sha256).hexdigest()
 

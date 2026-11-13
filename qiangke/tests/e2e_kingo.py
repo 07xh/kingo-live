@@ -33,6 +33,7 @@ def build_cfg(base: str) -> dict:
         "system": {
             "type": "kingo",
             "base_url": base,
+            "xnxq": "FICTIONAL-TERM",
             "timeout": 3,
             "retries": 1,
             "verify_tls": False,
