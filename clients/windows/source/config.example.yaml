@@ -21,7 +21,11 @@ strategy:
   max_cycles: 20              # 0 = no cycle-count limit; duration ALWAYS applies
   max_duration_minutes: 480   # 1–1440 minutes; protects unattended runs
   # Lower intervals require manually checking the school's published permission.
-  # Do not change this without official evidence. 30 s is the absolute hard floor.
+  # When independently verified, 2 s is the absolute configurable floor.
+  # Example for an independently authorized 2 s policy (not an authorization):
+  # interval_range: [2, 2]
+  # official_frequency_policy: {manually_confirmed: true, source: 'OFFICIAL_POLICY_REFERENCE', min_interval_seconds: 2}
+  # The server_policy sliding-window budget must permit the same effective cadence.
   official_frequency_policy: {manually_confirmed: false}
   # Only hashes of observed course+class IDs are stored; no Cookie or HTML.
   state_file: "data/notification-state.json"
