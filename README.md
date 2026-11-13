@@ -92,3 +92,10 @@ records from `ncwu/`, `qiangke/` and the Windows read-only client. The
 contract never infers missing seat counts or claims current availability;
 existing adapters remain unchanged until compatible consumers are verified.
 See [contract and rollout](docs/architecture/course-offering-contract-v1.md).
+
+## NCWU shared-contract read-only export
+
+`ncwu/hs_kcbcx.py --csv` now uses the shared offering model while preserving
+the existing Windows-compatible CSV columns. Optional `--standard-json path`
+produces normalized course-only snapshots with a client observation timestamp.
+The old `--json` format stays available.

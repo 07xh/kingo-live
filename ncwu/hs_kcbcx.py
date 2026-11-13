@@ -33,7 +33,10 @@ hs_kcbcx.py —— 华水青果「开课计划查询」抓取器（余量快照 
   python hs_kcbcx.py --cookie "..." --xn 2026 --xq 1 --only-open --sort qdrs
 
   # 导出 CSV（Excel 直接打开不乱码）
-  python hs_kcbcx.py --cookie "..." --xn 2026 --xq 1 --csv 开课计划.csv
+  python hs_kcbcx.py --xn 2026 --xq 1 --csv 开课计划.csv
+
+  # 生成只读规范化 JSON（本机观察时间、无 Cookie）
+  python hs_kcbcx.py --xn 2026 --xq 1 --standard-json 课程快照.json
 
   # 轮询盯余量，只在变化时打印（抢课前一天挂着跑）
   python hs_kcbcx.py --cookie "..." --xn 2026 --xq 1 --watch 5
@@ -43,13 +46,21 @@ Cookie 也可以放文件（一行 JSESSIONID=...）或环境变量 HS_COOKIE。
 
 import argparse
 import csv
+from datetime import datetime, timezone
 import json
 import os
+from pathlib import Path
 import re
 import sys
 import time
 import urllib.parse
 import urllib.request
+
+# Standalone invocation from ncwu/ and package invocation from repository root
+# share exactly the same read-only normalization rules.
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from contracts.offering import from_ncwu_plan
 
 BASE = "https://jwmis.ncwu.edu.cn/hsjw/"
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -170,7 +181,7 @@ def parse_plan(html):
         d["mian"] = _int(two)
 
         d["cap"] = _int(d.get("xkrssx", ""))      # 限选人数
-        d["left"] = _int(d.get("qdrs", ""))       # 可选人数（服务端算好的）
+        d["left"] = _server_remaining(d.get("qdrs", ""))  # 严格读取 qdrs，否则余量未知
         # Never synthesize qdrs from capacity - enrolled: the server's
         # available-seat number can legitimately disagree with that subtraction.
         # A missing qdrs must remain unknown, not falsely full/open.
@@ -183,6 +194,15 @@ def _int(s):
     s = str(s).strip()
     m = re.search(r"-?\d+", s)
     return int(m.group(0)) if m else None
+
+
+def _server_remaining(value):
+    """Use only an explicit nonnegative server count (not a text fragment)."""
+    text = "" if value is None else str(value).strip()
+    if not text or not text.isascii() or not text.isdecimal():
+        return None
+    number = int(text)
+    return number if number <= 1000000 else None
 
 
 # ─────────────────────────── 输出 ───────────────────────────
@@ -225,18 +245,33 @@ def print_table(rows):
         print("  ".join(cells))
 
 
+def normalized_offerings(rows, observed_at=None):
+    """Canonicalize local/read-only plan rows; never copy session material."""
+    return [from_ncwu_plan(d, observed_at=observed_at) for d in rows]
+
+
 def to_csv(rows, path):
+    # Validate the complete snapshot before creating the destination file.
+    normalized = normalized_offerings(rows)
     with open(path, "w", encoding="utf-8-sig", newline="") as f:
         w = csv.writer(f)
         w.writerow(["课程号", "课程名称", "学分", "总学时", "课程类别", "承担单位",
                     "教学班号", "限选人数", "已选", "免听", "可选人数",
                     "任课教师", "上课时间", "上课地点", "校区"])
-        for d in rows:
-            w.writerow([d.get("kcdm"), d.get("kcmc"), d.get("xf"), d.get("zongxs"),
-                        d.get("kclb"), d.get("cddw"), d.get("skbjdm"),
-                        d.get("cap"), d.get("taken"), d.get("mian"), d.get("left"),
-                        d.get("rkjs"), d.get("sksj"), d.get("skdd"), d.get("xqmc")])
-    print(c("32", f"已导出 {len(rows)} 行 → {path}"))
+        for d, item in zip(rows, normalized):
+            w.writerow([item.course_id, item.course_name, d.get("xf"), d.get("zongxs"),
+                        d.get("kclb"), d.get("cddw"), item.class_id,
+                        d.get("cap"), d.get("taken"), d.get("mian"), item.remaining,
+                        item.teacher, d.get("sksj"), d.get("skdd"), d.get("xqmc")])
+    print(c("32", f"已导出 {len(normalized)} 行 → {path}"))
+
+
+def to_standard_json(rows, path, *, observed_at):
+    """Write only canonical public course fields and the client observation time."""
+    normalized = normalized_offerings(rows, observed_at=observed_at)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump([item.as_dict() for item in normalized], f, ensure_ascii=False, indent=2)
+    print(c("32", f"已导出规范化只读 JSON → {path}"))
 
 
 def key_of(d):
@@ -282,6 +317,7 @@ def main():
                     help="排序：qdrs=可选人数升序（越紧越前）")
     ap.add_argument("--csv")
     ap.add_argument("--json")
+    ap.add_argument("--standard-json", help="导出统一只读课程快照（非实时）")
     ap.add_argument("--watch", type=float, default=0, metavar="秒",
                     help="轮询间隔，只在余量变化时打印")
     ap.add_argument("--watch-max", type=int, default=0, help="最多轮询次数，0=不限")
@@ -297,6 +333,7 @@ def main():
         return parse_plan(html)
 
     rows, total = query()
+    observed_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
     print(c("36", f"[开课计划] {args.xn} 学年 第{'一' if args.xq == '0' else '二'}学期 "
                   f"| 年级 {args.nj} 专业 {args.zydm} 院系 {args.yxb} | "
                   f"服务器 total={total} 解析行数={len(rows)}"))
@@ -324,8 +361,11 @@ def main():
     if args.csv:
         to_csv(view, args.csv)
     if args.json:
-        json.dump(view, open(args.json, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+        with open(args.json, "w", encoding="utf-8") as f:
+            json.dump(view, f, ensure_ascii=False, indent=1)
         print(c("32", f"已导出 JSON → {args.json}"))
+    if args.standard_json:
+        to_standard_json(view, args.standard_json, observed_at=observed_at)
 
     if not args.watch:
         return

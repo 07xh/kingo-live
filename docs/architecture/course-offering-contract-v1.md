@@ -33,3 +33,15 @@ requests or performs school enrollment.
 3. Replace redundant parsing ONLY after data and error-state contracts match.
 4. Keep submission and official enrollment readback entirely separate.
 5. Do not delete old adapters until Windows packaged and Linux/Windows CI pass.
+
+## First active consumer: NCWU plan exporter
+
+The existing `ncwu/hs_kcbcx.py --csv` now normalizes parsed rows through
+`from_ncwu_plan` before exporting its **unchanged 15-column** CSV. The
+optional `--standard-json path` writes strictly the canonical public fields,
+with the timestamp of this *client's observation* (not a server-time claim).
+The legacy `--json` output remains unchanged.
+
+Real parser-to-consumer offline tests verify NCWU HTML → CSV → Windows loader
+and Qiangke DataTable HTML → canonical model. No school requests are made in
+those tests, and no automatic submissions or real-time claims are introduced.
