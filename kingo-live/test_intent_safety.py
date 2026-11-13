@@ -136,6 +136,52 @@ class IntentHTTPTests(selftest.LiveHTTPTests):
             eng.close()
 
 
+
+    def test_unverified_enrollment_contract_never_sends_write(self):
+        cfg = self.cfg()
+        cfg["enrollment"]["official_verified"] = False
+        engine = lc.Engine(cfg, self.rec("_unverified"))
+        try:
+            result = engine.enroll(confirm=True)
+            self.assertEqual(self.state.submit_count, 0)
+            self.assertEqual(result[0].reason, "official_readback_contract_not_verified")
+        finally:
+            engine.close()
+
+    def test_cross_account_or_semester_readback_blocks_write(self):
+        for delta in ({"account_scope": "different"},
+                      {"semester": "different"}):
+            with self.subTest(delta=delta):
+                self.state.reset()
+                cfg = self.cfg()
+                cfg["enrollment"].update(delta)
+                engine = lc.Engine(cfg, self.rec("_wrong_scope"))
+                try:
+                    result = engine.enroll(confirm=True)
+                    self.assertEqual(self.state.submit_count, 0)
+                    self.assertEqual(result[0].reason, "official_readback_contract_not_verified")
+                finally:
+                    engine.close()
+
+    def test_incomplete_official_rows_remain_pending_not_confirmed(self):
+        # The mock acknowledges the write but returns an incomplete row.
+        cfg = self.cfg()
+        engine = lc.Engine(cfg, self.rec("_incomplete"))
+        original = engine._official_records
+        def incomplete(_r):
+            return lc.normalized_official_rows([{"kcid": "C001"}],
+                {"course_id": "kcid", "class_id": "skbj"})
+        engine._official_records = incomplete
+        try:
+            out = engine.enroll(confirm=True)
+            self.assertFalse(out[0].success)
+            self.assertEqual(out[0].reason, "readback_unavailable")
+            self.assertEqual(self.state.submit_count, 1)
+            self.assertTrue(engine.journal.pending_fingerprints())
+        finally:
+            engine._official_records = original
+            engine.close()
+
 def load_tests(loader, tests, pattern):
     suite = loader.loadTestsFromTestCase(JournalTests)
     suite.addTests(IntentHTTPTests(name) for name in IntentHTTPTests.__dict__
