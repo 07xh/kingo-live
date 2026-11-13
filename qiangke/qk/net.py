@@ -7,6 +7,7 @@ import http.client
 import http.cookiejar
 import io
 import json as _json
+import os
 import socket
 import ssl
 import time
@@ -85,7 +86,7 @@ class Session:
 
     def __init__(self, base_url: str = "", timeout: float = 10.0, retries: int = 2,
                  headers: Optional[Dict[str, str]] = None, proxy: str = "",
-                 verify_tls: bool = True, logger=None):
+                 verify_tls: bool = True, logger=None, cookie_file: str = ""):
         self.base_url = base_url.rstrip("/")
         if self.base_url:
             _check_url(self.base_url, verify_tls)
@@ -93,7 +94,8 @@ class Session:
         self.timeout = timeout
         self.retries = retries
         self.log = logger
-        self.jar = http.cookiejar.CookieJar()
+        self.jar = http.cookiejar.MozillaCookieJar()  # 支持 save/load 落盘
+        self.cookie_file = cookie_file or ""
         self.time_offset = 0.0  # 服务器时间 - 本地时间（秒）
         self.default_headers = {
             "User-Agent": UA,
@@ -117,6 +119,8 @@ class Session:
         self.opener = urllib.request.build_opener(*handlers, _SecureRedirectHandler(verify_tls))
         self._no_redirect_opener = urllib.request.build_opener(*handlers, _NoRedirect())
         self._lock = __import__("threading").RLock()
+        if self.cookie_file:
+            self.load_cookies()
 
     # ---------- 基础请求 ----------
     def abs_url(self, url: str) -> str:
@@ -238,6 +242,46 @@ class Session:
             self.time_offset = srv - time.time()
         except Exception:
             pass
+
+    # ---------- 会话持久化 ----------
+    def load_cookies(self, path: str = "") -> bool:
+        """从 Netscape cookie 罐恢复会话（含 authserver / jwmis 两个域）。"""
+        p = path or self.cookie_file
+        if not p or not os.path.isfile(p):
+            return False
+        try:
+            jar = http.cookiejar.MozillaCookieJar(p)
+            jar.load(ignore_discard=True, ignore_expires=True)
+        except (OSError, http.cookiejar.LoadError, ValueError) as e:
+            if self.log:
+                self.log.warning(f"会话文件损坏，忽略：{e}")
+            return False
+        for c in jar:
+            self.jar.set_cookie(c)
+        self.cookie_file = p
+        if self.log:
+            self.log.info(f"已恢复会话：{p}（{len(list(jar))} 条 cookie）")
+        return True
+
+    def save_cookies(self, path: str = "") -> bool:
+        """把当前会话落盘；含会话 cookie（discard）与过期项，全保留。"""
+        p = path or self.cookie_file
+        if not p:
+            return False
+        try:
+            os.makedirs(os.path.dirname(os.path.abspath(p)), exist_ok=True)
+            jar = http.cookiejar.MozillaCookieJar(p)
+            for c in self.jar:
+                jar.set_cookie(c)
+            jar.save(ignore_discard=True, ignore_expires=True)
+        except OSError as e:
+            if self.log:
+                self.log.warning(f"会话保存失败：{e}")
+            return False
+        self.cookie_file = p
+        if self.log:
+            self.log.info(f"会话已保存：{p}（{len(list(self.jar))} 条 cookie）")
+        return True
 
     # ---------- 辅助 ----------
     def server_now(self) -> float:

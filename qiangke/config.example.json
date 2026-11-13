@@ -7,6 +7,7 @@
     "timeout": 8,
     "retries": 1,
     "verify_tls": true,
+    "session_file": "logs/session-{user}.cookies",
     "login_retry": 2,
     "max_fail_tries": 3,
     "captcha": {

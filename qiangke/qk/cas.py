@@ -89,7 +89,13 @@ class CasAuth:
             self.last_error = "登录页里没找到 execution，页面结构可能变了"
             return False
         execution = m.group(1)
+        # 华水 authserver 主账密表单（fm1）没有 captcha 字段：正常登录免验证码。
+        # 只有连续失败/风控才渲染 captcha2 弹层（滑块），那时不硬闯，直接复用会话或人工过一次。
         need_code = 'name="captcha"' in html or 'id="captcha"' in html
+        if need_code and not captcha:
+            self.last_error = ("CAS 触发了风控验证码弹层（正常账密登录不弹）；"
+                               "浏览器手动登录一次，或复用已保存的会话")
+            return False
 
         data = {
             "username": user,
