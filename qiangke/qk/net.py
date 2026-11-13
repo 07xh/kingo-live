@@ -53,8 +53,14 @@ class Session:
 
     def __init__(self, base_url: str = "", timeout: float = 10.0, retries: int = 2,
                  headers: Optional[Dict[str, str]] = None, proxy: str = "",
-                 verify_tls: bool = False, logger=None):
+                 verify_tls: bool = True, logger=None):
         self.base_url = base_url.rstrip("/")
+        target = urllib.parse.urlsplit(self.base_url)
+        local_only = target.hostname in ("localhost", "127.0.0.1", "::1")
+        if target.scheme == "http" and not local_only:
+            raise ValueError("远程教务连接必须使用 HTTPS")
+        if not verify_tls and not local_only:
+            raise ValueError("关闭 TLS 证书验证仅允许本机测试环境")
         self.timeout = timeout
         self.retries = retries
         self.log = logger
