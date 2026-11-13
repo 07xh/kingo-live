@@ -59,6 +59,9 @@ class Engine:
             t.join()
         if all(not ad.logged_in for ad in adapters):
             self.log.error("全部账号登录失败，退出")
+            for ad in adapters:
+                for course in ad.acct["courses"]:
+                    self._record_unsent(ad, course, AUTH, "全部账号登录失败，未发送提交")
             return self._dump()
 
         self._wait_start(adapters)
@@ -180,7 +183,8 @@ class Engine:
                 self.results.append({"account": ad.acct.get("name") or "unknown",
                                      "course": course.get("name") or "",
                                      "code": UNKNOWN, "msg": "本地意图保护不可用",
-                                     "attempts": 0, "elapsed": 0.0,
+                                     "attempts": 0, "write_attempted": False,
+                                     "elapsed": 0.0,
                                      "at": datetime.now().strftime("%H:%M:%S.%f")[:-3]})
             return
         if not reserved:
@@ -189,7 +193,8 @@ class Engine:
                 self.results.append({"account": ad.acct.get("name") or "unknown",
                                      "course": course.get("name") or "",
                                      "code": UNKNOWN, "msg": "已有待核验提交意图，跨重启阻止重复写入",
-                                     "attempts": 0, "elapsed": 0.0,
+                                     "attempts": 0, "write_attempted": False,
+                                     "elapsed": 0.0,
                                      "at": datetime.now().strftime("%H:%M:%S.%f")[:-3]})
             return
         started = time.perf_counter()
