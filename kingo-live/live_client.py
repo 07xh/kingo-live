@@ -519,6 +519,8 @@ class Strategy:
 
     @classmethod
     def from_dict(cls, d: dict) -> "Strategy":
+        if d.get("respect_retry_after") is False:
+            raise ValueError("Disabling the server Retry-After cooldown is not supported")
         known = {f for f in cls.__dataclass_fields__}
         return cls(**{k: v for k, v in d.items() if k in known})
 
@@ -626,12 +628,10 @@ class Engine:
                   build_ms: float = 0.0) -> RawResponse:
         allowed, wait_ms, reason = self.budget.reserve()
         if not allowed:
-            if reason == "retry_after" and not self.st.respect_retry_after:
-                # Explicitly ignore Retry-After: issue the physical request anyway.
-                r = tr.request(method, path, body=body, headers=headers,
-                               build_ms=build_ms)
-                self._apply_cooldown(r)
-                return r
+            # Server cooldown is mandatory, including under legacy configurations.
+            # Never bypass a 429/503 Retry-After to issue another physical request.
+            if reason == "retry_after":
+                return RawResponse(status=429, headers={}, body=b"", error="budget:retry_after")
             time.sleep(min(wait_ms, 5000.0) / 1000.0)
             allowed, _, reason = self.budget.reserve()
         if not allowed:
