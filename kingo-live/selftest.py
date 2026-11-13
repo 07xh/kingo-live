@@ -160,6 +160,7 @@ class LiveHTTPTests(unittest.TestCase):
         c["verify_tls"] = False
         c["budget"]["database"] = str(self.dir / f"budget_{self.tag()}.sqlite")
         c["journal"]["path"] = str(self.dir / f"journal_{self.tag()}.jsonl")
+        c["journal"]["shared_intent_db"] = c["journal"]["path"] + ".sqlite3"
         c["targets"] = [{"course_id": "C001", "class_id": "T01"}]
         c["strategy"].update(strategy)
         return c
