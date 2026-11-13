@@ -13,8 +13,20 @@ from core.request_budget import (
 class RequestBudgetTest(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.temp.cleanup)
+        self.addCleanup(self._cleanup_temp)
         self.db = Path(self.temp.name) / "quota.db"
+
+    def _cleanup_temp(self):
+        # Windows can briefly retain SQLite/WAL file handles in the runner.
+        # Retry transient sharing violations; still fail if a handle really leaks.
+        for attempt in range(15):
+            try:
+                self.temp.cleanup()
+                return
+            except PermissionError:
+                if attempt == 14:
+                    raise
+                time.sleep(0.1)
 
     def budget(self, windows=((0.08, 1),), *, verified=True, concurrency=1):
         policy = RequestPolicy(tuple(WindowLimit(*w) for w in windows),
