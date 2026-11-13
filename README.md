@@ -71,3 +71,12 @@ The Windows client also retains `clients/windows/source/core/har_to_schema.py` f
 ## Windows course-plan CSV snapshot viewer
 
 From the Windows desktop use **离线工具 → 查看开课计划 CSV（非实时）** to inspect a local CSV exported by `ncwu/hs_kcbcx.py --csv`. The viewer uses only the user-selected UTF-8/UTF-8-BOM file; it never connects to the school, writes enrollment requests, changes the user's plans, or persists session credentials. An absent `可选人数` stays **未知**, never inferred from capacity minus enrollment. The viewer must not be interpreted as live availability; comparing with the official page is still required.
+
+## Legacy Windows documentation and read-only diagnostics
+
+The existing Windows UI now displays per-cycle query duration, HTTP count, last
+response status/size, and a transport-error category without logging URLs,
+cookies or response contents. No extra polling request is added.
+Historical design and acceptance material from the public Windows predecessor
+is archived in [docs/legacy-kingo-assistant](docs/legacy-kingo-assistant/README.md).
+Those files are **past-state evidence**, not current school acceptance.
