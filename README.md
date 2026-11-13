@@ -16,11 +16,16 @@ Technical research repository: a real HTTP client for the Kingo/NCWU course-enro
 | `kingo-live/selftest.py`, `test_optimizations.py`, `cli_smoke.py` | Real loopback HTTP/1.1 end-to-end tests |
 | `bench/academic_latency_sim.py` | Offline four-stage latency simulation, allocation rules, lock modes, P5 sensitivity matrix |
 | `bench/p5-results.json`, `sim-results.json` | Recorded measurement output |
+| `ncwu/README.md` | Live-endpoint notes: the six API paths, clock sync, five design decisions, six pitfalls |
+| `ncwu/hs_kcbcx.py` | Offline-capable course-plan query (`tableId=5327042`) with CSV export and remainder watch |
+| `ncwu/hs_xk.py` | Gate probe (`getWsxkTimeRange`), available courses (`tableId=2548`), submission (`--dry-run` supported) |
+| `ncwu/hs_sniper.py` | Enrollment engine: gate → clock sync → remainder watch → prewarm → concurrent submit → readback verify |
+| `ncwu/sniper.example.json` | Template only; cookie is empty and injected via `KINGO_COOKIE` |
 
 ## Run
 
 ```bash
-python -m py_compile kingo-live/*.py bench/*.py
+python -m py_compile kingo-live/*.py bench/*.py ncwu/*.py
 cd kingo-live && python selftest.py && python test_optimizations.py && python cli_smoke.py && python har_to_schema.py --self-test
 cd ../bench && python academic_latency_sim.py --self-test && python academic_latency_sim.py --all
 ```

@@ -43,3 +43,10 @@ clients/windows/source/logs/
 clients/windows/source/data/
 clients/windows/source/*.har
 clients/windows/source/*records*.jsonl
+
+# NCWU live scripts — local session/cookie state
+ncwu/hs_sniper.json
+ncwu/hs_cookie.txt
+ncwu/*.cookie
+ncwu/plan*.csv
+ncwu/plan*.html
