@@ -55,6 +55,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 SENSITIVE_HEADERS = frozenset({
     "cookie", "set-cookie", "authorization", "proxy-authorization",
+    "referer", "location",
     "x-csrf-token", "x-xsrf-token", "x-api-key", "x-auth-token",
     "token", "xqersign", "encrptsecretkey",
 })
@@ -68,6 +69,14 @@ BROWSER_HEADERS = (
     "sec-fetch-dest", "sec-fetch-mode", "sec-fetch-site",
     "origin", "referer", "upgrade-insecure-requests",
 )
+# A HAR can contain custom student-ID or session headers. Only these
+# well-known protocol fields are safe to include as unredacted values.
+SAFE_HEADER_VALUES = frozenset({
+    "host", "user-agent", "accept", "accept-language", "accept-encoding",
+    "content-type", "content-length", "connection", "x-requested-with",
+    "sec-fetch-dest", "sec-fetch-mode", "sec-fetch-site",
+    "sec-ch-ua", "sec-ch-ua-mobile", "sec-ch-ua-platform",
+})
 READ_ONLY_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 BLOCK_STATUSES = frozenset({0, 400, 403, 406, 412, 418, 429, 451, 503})
 
@@ -205,11 +214,11 @@ def fingerprint_from_har(path_or_har: Any, url_contains: str = "",
     u = urllib.parse.urlsplit(url)
     # The URL itself may carry tokens/signatures; scrub those values too.
     safe_query = urllib.parse.urlencode([
-        (k, "<redacted>" if k.lower() in SENSITIVE_PARAMS else v)
-        for k, v in urllib.parse.parse_qsl(u.query, keep_blank_values=True)
+        (k, "<redacted>") for k, v in
+        urllib.parse.parse_qsl(u.query, keep_blank_values=True)
     ])
     safe_url = urllib.parse.urlunsplit(
-        (u.scheme, u.netloc, u.path, safe_query, u.fragment))
+        (u.scheme, u.netloc, u.path, safe_query, ""))
     path = u.path + (("?" + safe_query) if safe_query else "")
 
     headers: List[Tuple[str, str]] = []
@@ -226,7 +235,8 @@ def fingerprint_from_har(path_or_har: Any, url_contains: str = "",
         if low == "cookie":
             cookie_names = [p.split("=", 1)[0].strip()
                             for p in v.split(";") if p.strip()]
-        headers.append((k, redact(v) if low in SENSITIVE_HEADERS else v))
+        headers.append((k, v if low in SAFE_HEADER_VALUES
+                        and low not in SENSITIVE_HEADERS else redact(v)))
 
     param_names: List[str] = []
     sensitive_params: List[str] = []
@@ -458,6 +468,12 @@ class SentRequest:
     def public(self) -> dict:
         d = asdict(self)
         d.pop("echo", None)
+        # Never persist response values: Set-Cookie/Location and even
+        # custom headers may contain bearer tokens or student identity.
+        d["response_header_names"] = sorted(d.pop("response_headers", {}))
+        path = d.pop("path", "")
+        d["path_sha256"] = hashlib.sha256(path.encode("utf-8")).hexdigest()[:16]
+        d["path_has_query"] = "?" in path
         return d
 
 
@@ -523,6 +539,12 @@ class AlignedClient:
                     v = self.cookie
                 elif self.cookie:
                     v = self.cookie
+            # A redacted HAR value is evidence, not a value to transmit.
+            # A caller may supply the current value explicitly via extra_headers.
+            if is_redacted(v) and low != "cookie":
+                if extra and any(str(n).lower() == low for n in extra):
+                    continue
+                continue
             if k == "Host" and v == "TARGET_HOST":
                 v = self.host if self.port in (80, 443) else f"{self.host}:{self.port}"
             out.append((k, v))
@@ -580,7 +602,7 @@ class AlignedClient:
     def _public_headers(rows: Sequence[Tuple[str, str]]) -> List[List[str]]:
         out = []
         for k, v in rows:
-            if k.lower() in SENSITIVE_HEADERS:
+            if k.lower() in SENSITIVE_HEADERS or k.lower() not in SAFE_HEADER_VALUES:
                 v = "<injected>" if v and not is_redacted(v) else "<redacted>"
             out.append([k, v])
         return out

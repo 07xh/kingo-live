@@ -170,7 +170,13 @@ class ReleaseMonitor:
                 poll_cost_ms: float = 0.0) -> List[ReleaseEvent]:
         self.polls += 1
         now = time.time()
-        current = {self._fp(o): o for o in offers}
+        current = {}
+        for o in offers:
+            if (not getattr(o, "course_id", None)
+                    or not getattr(o, "class_id", None)
+                    or remaining_count(o) is None):
+                continue  # unknown/partial record is not a valid release
+            current[self._fp(o)] = o
         out: List[ReleaseEvent] = []
         for fp, o in current.items():
             prev = self.snapshot.get(fp)
@@ -183,7 +189,8 @@ class ReleaseMonitor:
             prv = remaining_count(prev)
             # A classified event always has a known current count.
             out.append(self._event(kind, o, cur, prv, now, poll_cost_ms))
-        self.snapshot = current
+        # Preserve comparable prior observations across empty/partial polls.
+        self.snapshot.update(current)
         self.events.extend(out)
         return out
 
@@ -241,11 +248,17 @@ class TargetRanker:
         return None
 
     def score(self, offer: Offering, priority: int = 1) -> float:
-        cap = max(1, int(offer.capacity or 0))
-        ratio = min(1.0, max(0.0, int(offer.remain or 0) / cap))
-        heat = min(1.0, max(0.0, float(offer.heat or 0.0)))
-        return round(self.w_remain * ratio
-                     + self.w_heat * (1.0 - heat)
+        remain = remaining_count(offer)
+        if remain is None or remain <= 0:
+            return float("-inf")
+        capacity = getattr(offer, "capacity", None)
+        ratio = (min(1.0, remain / capacity)
+                 if isinstance(capacity, int) and not isinstance(capacity, bool)
+                 and capacity > 0 else 0.0)
+        heat = getattr(offer, "heat", None)
+        heat_bonus = (self.w_heat * (1.0 - min(1.0, max(0.0, float(heat))))
+                      if heat is not None else 0.0)
+        return round(self.w_remain * ratio + heat_bonus
                      - self.w_priority * max(0, priority - 1), 6)
 
     def reorder(self, targets: List[dict],
@@ -255,7 +268,7 @@ class TargetRanker:
             if not t.get("enabled", True):
                 continue
             o = self._match(offers, t)
-            if o is None:
+            if o is None or not remaining_count(o):
                 continue
             prio = int(t.get("priority", i + 1))
             scored.append((self.score(o, prio), prio, dict(t)))
@@ -326,18 +339,20 @@ class EventDriver:
         self.decisions: List[Decision] = []
 
     def poll(self, offers: List[Offering], poll_cost_ms: float = 0.0,
-             status: int = 200) -> Decision:
+             status: int = 200, retry_after_ms: float = 0.0) -> Decision:
         if status in (401, 403):
             self.poller.on_auth_failure()
             d = Decision("auth", "stop", f"http={status}")
         elif status == 429:
-            self.poller.on_rate_limited()
+            self.poller.on_rate_limited(retry_after_ms)
             d = Decision("rate_limited", "backoff", "http=429",
                          self.poller.next_interval())
         elif status in (500, 502, 503, 504):
             self.poller.on_overload()
             d = Decision("overload", "backoff", f"http={status}",
                          self.poller.next_interval())
+        elif status != 200:
+            d = Decision("invalid_snapshot", "stop", f"http={status}")
         else:
             events = self.monitor.observe(offers, poll_cost_ms)
             if ReleaseMonitor.trigger(events):

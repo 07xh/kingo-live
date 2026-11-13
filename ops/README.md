@@ -18,6 +18,8 @@
 | `orchestrator.py` | 六阶段流水线（recon→plan→arm→watch→act→verify）：把上面全部模块串成一条显式状态机 | 编排 |
 | `adapter.py` | 配置桥：`kcid`/`skbj`/`jxbh`/`courseId`/`vol` 等真实字段别名 → ops 契约；身份缺失直接报错，不发空心目标 | 对接 |
 | `race_probe.py` | #11 原子性探测：classify() 纯函数判定服务端锁行为；RaceProbe 默认**未武装**，显式 `armed=True` 才可控多发（上限 4） | #11 |
+| `offering_bridge.py` | 统一只读课程字段兼容，未知余量与教学班号不推测 | 数据契约 |
+| `readonly_diagnostics.py` | 独立标准 JSON 快照只读诊断，无网络、无提交 | 只读工具 |
 | `test_ops.py` / `test_fingerprint.py` / `test_phase2.py` / `test_phase3.py` | 65 + 113 + 182 + 32 项离线回归 | 验证 |
 
 ## 跑起来
@@ -182,7 +184,7 @@ python fingerprint_bridge.py --cdp http://127.0.0.1:9222 \
 | `lead_ms` | 30（10–80） | 覆盖一次目录读 + 已预构造 body 的发送，不覆盖握手 |
 | 连接分片 | 每会话 1 条 + 1 备用 | 备用节点不复用 TLS session；`concurrency` 仍锁 1 |
 | 通道权重 | 1.0 / 0.8 / 0.6 / 0.5 | 已选名单 / wap 课表 / 学分 / `zxxq`；滞后读再乘 0.30 |
-| 确认阈值 | `positive≥1.20` 且 ≥2 个非滞后通道 | 单通道滞后否定**不能**把真成功变 `pending` |
+| 最终确认判据 | 新鲜官方已选名单 + 精确课程与教学班号 + 账号与学期绑定 | 多来源权重仅为辅助线索，不可代替官方成功证明 |
 | Frida 改写字段 | 仅 `kcid`、`skbj` | `xqerSign` 覆盖 `param/param2/token`，出口改写必废签名 |
 
 ### 关键判据表
@@ -191,7 +193,7 @@ python fingerprint_bridge.py --cdp http://127.0.0.1:9222 \
 |---|---|---|
 | 变体出现不同 `X-RateLimit-*` / `Server-Timing` / `prohibit` | 存在独立入口 | 只选 1 条通道深入测，不并发扇出 |
 | 同一会话换学期参数 → 窗口标记变化 | 窗口判定吃客户端输入 | 验证服务端是否二次硬校验，不得直接构造越窗请求 |
-| 名单滞后 `present=false` + 课表/学分 `present=true` | 真成功被缓存误读 | `verdict=confirmed`，意图终止，绝不重提 |
+| 名单滞后 `present=false` + 课表/学分 `present=true` | 可能存在缓存或数据延迟 | `verdict=pending`，等待精确官方名单回查 |
 | 名单新鲜否定 + 其他通道肯定 | 证据冲突 | `human_check`，停机不猜 |
 | 签名 POST 的构造点出现 `kcid/skbj put()` | 可让 App 自己签发 | hook 构造点，签名出口一字不改 |
 | 签名含时间戳 + 设备指纹且服务端校验 | #5 失效 | 转 #4/#12，不再投入 |
@@ -255,3 +257,27 @@ recon ──> plan ──> arm ──> [ watch ⇄ act ⇄ verify ]   （武装�
 - `test_phase3.py` **32/32**：阶段机前向/武装簇、P5 折叠、monitor-only 钳制、单发/重放阻断、executor 异常落 pending、#11 四类判定、disarmed 不发弹、shots 硬上限、**真实回环 HTTP 端到端**（模拟目录 0→3 余量 → submit Decision → 单次执行 → 对账）。
 - 全量：65 + 113 + 182 + 32 = **392 项 OK**，三个演示脚本可独立运行，`import ops` v2.1.0 / 12 模块。
 - 实机缺口不变：无学校主机、无真 HAR/APK；`Mission.host`、`catalog_path` 仍为 `TARGET_*`。
+
+
+## CI + cross-module read-only contract (2026-11-14)
+
+- Ubuntu and Windows CI run all four local regression scripts, including `test_hardening.py`; all network tests use loopback targets.
+- `offering_bridge.normalize_readonly()` accepts canonical `CourseOffering.remaining` and legacy `Offering.remain` structurally. Missing seats and teaching-class IDs remain unknown; the bridge does not import or modify any executable enrollment adapter.
+- `crosscheck.fuse()` confirms only a fresh, exact official-list entry bound to explicit `account_scope` and `semester`. Supporting timetable/credit signals never create confirmation by themselves. Repeated observations from one channel count once; optional `intent_at` excludes older observations.
+- `seat_events` ignores unknown/partial snapshots, does not manufacture a fresh release after an empty poll, and does not replace durable journals or the existing request budget.
+- `endpoints.run()` propagates explicit per-endpoint read-only headers; diagnostic public reports omit raw response values and request path values.
+- No live enrollment acceptance, signed-request replay, write integration or school-host test is implied by CI green.
+
+
+## 独立只读快照诊断入口（不接管执行器）
+
+`python -m ops.readonly_diagnostics --snapshot current.json --compare previous.json`
+
+仅接受仓库 `contracts/offering.py` 定义的标准 JSON 数组（例如 `ncwu/hs_kcbcx.py --standard-json`、`qiangke/run.py list --standard-json` 的离线导出）。从仓库根目录执行。输出来源、未知字段数量、课程与教学班身份匹配概况，以及两份快照中可解释的名额增加/减少事件数量。**不会读取 Cookie 或学号，不发送请求，不触发提交，不推断是否真正选课成功。** 默认不打印原始课程或教学班号。
+
+`python -m ops.readonly_diagnostics --self-test` 验证本地契约与事件转换。CI 在 Ubuntu/Windows 上运行相关测试。此工具不改变任何原有提交协议和 journal。
+
+
+### 只读报告隐私边界
+
+`recon`、`endpoints` 的共享报告仅保留端点路径结构和查询参数名称，查询值脱敏；`recon` 不再记录响应体预览，改为摘要。浏览器桥接拒绝写请求时只记录 URL 摘要，不把完整 URL 写进日志。这些措施不代表原始 HAR 本身已脱敏；原始抓包仍应只留在受控本机环境。
