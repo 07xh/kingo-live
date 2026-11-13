@@ -12,10 +12,29 @@ import hashlib
 import hmac
 import json
 import os
+import re
 from pathlib import Path
 import secrets
 import sqlite3
 from urllib.parse import urlsplit
+
+
+def term_spellings(term: str) -> tuple[str, ...]:
+    """Equivalent explicit academic year/term spellings, including legacy keys.
+
+    Only numeric year/term forms are normalized. Arbitrary term identifiers
+    remain exact; a course year like 2026-2027 is NOT conflated with 2026.
+    The additional variants are checked for historic pre-migration intents.
+    """
+    if not isinstance(term, str) or not term.strip():
+        raise ValueError("缺少明确学期标识")
+    raw = term.strip()
+    match = re.fullmatch(r"(\d{4}(?:-\d{4})?)[/,-]([1-3])", raw)
+    if not match:
+        return (raw,)
+    year, part = match.groups()
+    return (f"{year}/{part}", f"{year}-{part}", f"{year},{part}")
+
 
 
 class IntentJournal:
@@ -35,7 +54,7 @@ class IntentJournal:
         if not all(isinstance(v, str) for v in (school, account, term)):
             raise ValueError("提交意图身份格式错误")
         school_id = (urlsplit(school).netloc or school).strip().lower()
-        account_id, term_id = account.strip(), term.strip()
+        account_id, term_id = account.strip(), term_spellings(term)[0]
         if school_id in ("", "unknown", "none", "-"):
             raise ValueError("缺少可信教务系统标识")
         if not account_id:
@@ -78,41 +97,74 @@ class IntentJournal:
                               ensure_ascii=False, separators=(",", ":"))
         return hmac.new(self.salt, identity.encode("utf-8"), hashlib.sha256).hexdigest()
 
-    def reserve(self, *, school: str, account: str, term: str, course: dict) -> bool:
-        """Atomically reserve BEFORE HTTP write; False includes prior crashes.
+    def reserve(self, *, school: str, account: str, term: str,
+                course: dict) -> bool:
+        """Atomically fence a course intent across normalized/legacy term keys.
 
-        BEGIN IMMEDIATE + UNIQUE fingerprint makes competing processes and
-        threads unable to acquire the same enrollment intent twice.
+        The existing SQLite file is retained. A historical course-key or
+        teaching-class-key reservation under any recognized term spelling
+        blocks a new physical write, even after an app upgrade.
         """
-        fp = self._fingerprint(school=school, account=account, term=term, course=course)
-        # Previous revisions wrote exact teaching-class fingerprints. Check
-        # them under the same lock before using the canonical course key,
-        # so upgrading cannot silently replay an already-sent POST.
-        prior_class_fp = fp
+        fp = self._fingerprint(school=school, account=account,
+                               term=term, course=course)
+        school_id = (urlsplit(school).netloc or school).strip().lower()
+        account_id = account.strip()
         code = str(course.get("kch_id") or course.get("kcdm") or "").strip()
         class_id = str(course.get("xkid") or course.get("jxb_ids") or "").strip()
-        if code and class_id and class_id.lower() not in ("none", "null", "unknown", "-"):
-            legacy_identity = json.dumps([
-                (urlsplit(school).netloc or school).strip().lower(),
-                account.strip(), term.strip(), "class", class_id,
-            ], ensure_ascii=False, separators=(",", ":"))
-            prior_class_fp = hmac.new(
-                self.salt, legacy_identity.encode("utf-8"),
-                hashlib.sha256).hexdigest()
-        with closing(sqlite3.connect(self.path, timeout=15, isolation_level=None)) as db:
+        if class_id.lower() in ("none", "null", "unknown", "-"):
+            class_id = ""
+        targets = ([("course", code)] if code else []) + (
+            [("class", class_id)] if class_id else [])
+        fingerprints = {fp}
+        for spelling in term_spellings(term):
+            for target_type, identity_code in targets:
+                payload = json.dumps([
+                    school_id, account_id, spelling, target_type, identity_code,
+                ], ensure_ascii=False, separators=(",", ":"))
+                fingerprints.add(hmac.new(
+                    self.salt, payload.encode("utf-8"),
+                    hashlib.sha256).hexdigest())
+
+        with closing(sqlite3.connect(self.path, timeout=15,
+                                     isolation_level=None)) as db:
             db.execute("BEGIN IMMEDIATE")
             try:
+                placeholders = ",".join("?" for _ in fingerprints)
                 row = db.execute(
-                    "SELECT 1 FROM attempts WHERE fingerprint IN (?, ?) LIMIT 1",
-                    (fp, prior_class_fp)).fetchone()
+                    "SELECT 1 FROM attempts WHERE fingerprint IN ("
+                    + placeholders + ") LIMIT 1",
+                    tuple(fingerprints)).fetchone()
                 if row:
                     db.commit()
                     return False
                 cursor = db.execute(
-                    "INSERT INTO attempts (fingerprint, state) VALUES (?, 'pending')",
-                    (fp,))
+                    "INSERT INTO attempts (fingerprint, state) "
+                    "VALUES (?, 'pending')", (fp,))
                 db.commit()
                 return cursor.rowcount == 1
+            except BaseException:
+                db.rollback()
+                raise
+
+    def cancel_definitely_unsent(self, *, school: str, account: str,
+                                 term: str, course: dict) -> bool:
+        """Release ONLY the newly reserved key after proven pre-send failure.
+
+        Never call for a timeout, network error, response ambiguity, or any
+        case where the transport could already have sent a request. Legacy
+        keys are never deleted through this method.
+        """
+        fp = self._fingerprint(school=school, account=account,
+                               term=term, course=course)
+        with closing(sqlite3.connect(self.path, timeout=15,
+                                     isolation_level=None)) as db:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                result = db.execute(
+                    "DELETE FROM attempts WHERE fingerprint = ? "
+                    "AND state = 'pending'", (fp,))
+                db.commit()
+                return result.rowcount == 1
             except BaseException:
                 db.rollback()
                 raise

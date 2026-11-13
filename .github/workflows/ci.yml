@@ -26,7 +26,7 @@ jobs:
           python-version: ${{ matrix.python }}
       - name: Compile
         shell: bash
-        run: python -m py_compile contracts/*.py kingo-live/*.py bench/*.py ncwu/*.py qiangke/run.py qiangke/qk/*.py qiangke/qk/adapters/*.py qiangke/tests/*.py
+        run: python -m py_compile contracts/*.py kingo-live/*.py bench/*.py ncwu/*.py qiangke/run.py qiangke/qk/*.py qiangke/qk/adapters/*.py qiangke/tests/*.py ops/*.py
       - name: Shared read-only offering contract (offline)
         shell: bash
         run: python -m unittest discover -s contracts/tests -q
@@ -57,6 +57,15 @@ jobs:
           python test_optimizations.py
           python cli_smoke.py
           python har_to_schema.py --self-test
+      - name: OPS research regressions (offline and localhost only)
+        shell: bash
+        working-directory: ops
+        run: |
+          python test_ops.py
+          python test_fingerprint.py
+          python test_phase2.py
+          # Phase 3 may arrive through a concurrent ops feature merge.
+          if [ -f test_phase3.py ]; then python test_phase3.py; fi
       - name: Offline simulation and P5 matrix
         shell: bash
         working-directory: bench
@@ -94,7 +103,7 @@ jobs:
         shell: pwsh
         working-directory: clients/windows/source
         run: |
-          python -m PyInstaller --noconfirm --clean --onefile --windowed --name KingoAssistant-Windows --add-data "config.example.yaml;." --add-data "demo;demo" --add-data "../../../kingo-live/har_to_schema.py;." --paths "../../.." --collect-submodules contracts --collect-submodules pystray windows_gui.py
+          python -m PyInstaller --noconfirm --clean --onefile --windowed --name KingoAssistant-Windows --add-data "config.example.yaml;." --add-data "demo;demo" --add-data "../../../kingo-live/har_to_schema.py;." --paths "../../.." --collect-submodules contracts --hidden-import contracts.har_core --hidden-import contracts.seat_diff --collect-submodules pystray windows_gui.py
           if ($LASTEXITCODE -ne 0) { throw "Integrated Windows build failed" }
       - name: Verify packaged executable offline
         shell: pwsh

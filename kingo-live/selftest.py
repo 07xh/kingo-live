@@ -146,6 +146,7 @@ class LiveHTTPTests(unittest.TestCase):
     def cfg(self, **strategy):
         c = json.loads((HERE / "config.example.json").read_text(encoding="utf-8"))
         c["base_url"] = f"http://127.0.0.1:{self.port}"
+        c["account_scope"] = "fictional-loopback-user"
         c["catalog"]["path"] = "/catalog"
         c["submit"]["path"] = "/submit"
         c["enrollment"]["path"] = "/enrollment"

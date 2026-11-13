@@ -22,7 +22,7 @@ if errorlevel 1 goto :error
 if errorlevel 1 goto :error
 ".venv\Scripts\python.exe" windows_gui.py --self-test
 if errorlevel 1 goto :error
-".venv\Scripts\python.exe" -m PyInstaller --noconfirm --clean --onefile --windowed --name KingoAssistant-Windows --add-data "config.example.yaml;." --add-data "demo;demo" --add-data "../../../kingo-live/har_to_schema.py;." --paths "../../.." --collect-submodules contracts --collect-submodules pystray windows_gui.py
+".venv\Scripts\python.exe" -m PyInstaller --noconfirm --clean --onefile --windowed --name KingoAssistant-Windows --add-data "config.example.yaml;." --add-data "demo;demo" --add-data "../../../kingo-live/har_to_schema.py;." --paths "../../.." --collect-submodules contracts --hidden-import contracts.har_core --hidden-import contracts.seat_diff --collect-submodules pystray windows_gui.py
 if errorlevel 1 goto :error
 if not exist "dist\KingoAssistant-Windows.exe" goto :error
 ".venv\Scripts\python.exe" tools\verify_windows_build.py "dist\KingoAssistant-Windows.exe"

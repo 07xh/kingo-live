@@ -336,10 +336,10 @@ def test_crosscheck(c: C) -> None:
     fresh_neg = e("official_list", "C1", "01", False, 38.0, False, "fresh")
 
     v = crosscheck.fuse(t, [stale_neg, wap_pos, credit_pos])
-    c.check("stale list + 2 positives -> confirmed", v.verdict == "confirmed", str(v))
-    c.check("confirmed is terminal", v.action == "terminal")
-    c.check("confirmed lists stale channel", "official_list" in v.stale_channels)
-    c.check("confirmed confidence high", v.confidence >= 0.7)
+    c.check("stale list + 2 positives stays pending", v.verdict == "pending", str(v))
+    c.check("no official positive is not terminal", v.action == "keep_pending")
+    c.check("stale negative tracked", "official_list" in v.stale_channels)
+    c.check("positive channels still contribute evidence", v.positive > 1.0)
 
     v2 = crosscheck.fuse(t, [fresh_neg, wap_pos])
     c.check("fresh negative + positive -> contradicted",
@@ -363,6 +363,26 @@ def test_crosscheck(c: C) -> None:
 
     v7 = crosscheck.fuse(t, [stale_neg, zxxq_pos])
     c.check("weak partial positive stays pending", v7.verdict == "pending", str(v7))
+
+    v8 = crosscheck.fuse(t, [
+        e("official_list", "C1", "", True, 10.0, False, "course-only"),
+        e("wap_schedule", "C1", "01", True, 20.0, False, "class-specific")])
+    c.check("classless official record cannot confirm", v8.verdict == "pending", str(v8))
+    v9 = crosscheck.fuse(t, [
+        e("official_list", "C1", "02", True, 10.0, False, "wrong class")])
+    c.check("wrong teaching class never confirms", v9.verdict == "unknown", str(v9))
+    v10 = crosscheck.fuse({"course_id": "C1", "class_id": ""}, [
+        e("official_list", "C1", "", True, 10.0, False, "course-only")])
+    c.check("missing target class cannot confirm", v10.verdict == "unknown", str(v10))
+    v11 = crosscheck.fuse(t, [
+        e("wap_schedule", "C1", "01", True, 20.0, False, "first"),
+        e("wap_schedule", "C1", "01", True, 21.0, False, "second"),
+        e("credit_summary", "C1", "01", True, 22.0, False, "count")])
+    c.check("duplicate nonofficial sources cannot confirm", v11.verdict == "pending", str(v11))
+    v12 = crosscheck.fuse(t, [
+        e("official_list", "C1", "01", True, 10.0, False, "first"),
+        e("official_list", "C1", "01", False, 10.0, False, "second")])
+    c.check("contradictory same channel needs review", v12.verdict == "contradicted")
 
     c.check("stale penalty applied",
             crosscheck._weight(stale_neg) < crosscheck._weight(fresh_neg))

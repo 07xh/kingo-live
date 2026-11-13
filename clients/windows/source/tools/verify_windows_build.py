@@ -7,6 +7,8 @@ packaging/GUI verification, NOT verification of any university API.
 from __future__ import annotations
 
 import hashlib
+import os
+import tempfile
 import json
 from pathlib import Path
 import platform
@@ -35,16 +37,28 @@ def verify(exe: Path, *, system: str | None = None) -> dict:
               ("native_tk_gui_smoke", "--smoke-gui", 45))
     passed = {}
     for name, flag, timeout in checks:
+        trace_file = Path(tempfile.gettempdir()) / "kingo-ci-offline-gui-smoke.txt"
+        trace_file.unlink(missing_ok=True)
+        run_env = dict(os.environ)
+        if name == "native_tk_gui_smoke":
+            run_env["KINGO_GUI_SMOKE_TRACE"] = str(trace_file)
         try:
             result = subprocess.run([str(exe.resolve()), flag],
                                     timeout=timeout, check=False, stdout=subprocess.DEVNULL,
-                                    stderr=subprocess.DEVNULL)
+                                    stderr=subprocess.DEVNULL, env=run_env)
         except subprocess.TimeoutExpired as error:
             raise BuildVerificationError(f"{name} timed out after {timeout}s") from error
         except OSError as error:
             raise BuildVerificationError(f"{name} could not start") from error
         if result.returncode != 0:
-            raise BuildVerificationError(f"{name} failed with exit code {result.returncode}")
+            detail = ""
+            if trace_file.exists():
+                detail = trace_file.read_text(encoding="utf-8")[-3500:]
+                trace_file.unlink(missing_ok=True)
+            raise BuildVerificationError(
+                f"{name} failed with exit code {result.returncode}"
+                + (f"\\nOffline trace:\\n{detail}" if detail else ""))
+        trace_file.unlink(missing_ok=True)
         passed[name] = "passed"
 
     with exe.open("rb") as handle:

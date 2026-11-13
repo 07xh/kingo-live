@@ -103,6 +103,52 @@ class JournalTests(unittest.TestCase):
                                            course={"kch_id": "NCWU-101",
                                                    "xkid": "002"}))
 
+    def test_term_spellings_share_one_intent_across_ncwu_and_qiangke(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "intents.sqlite3"
+            first = IntentJournal(db)
+            kwargs = {"school": "https://jwmis.ncwu.edu.cn", "account": "fictional",
+                      "course": {"kch_id": "COURSE-01", "xkid": "CLASS-01"}}
+            self.assertTrue(first.reserve(**kwargs, term="2026-1"))
+            self.assertFalse(IntentJournal(db).reserve(**kwargs, term="2026/1"))
+            self.assertFalse(IntentJournal(db).reserve(**kwargs, term="2026,1"))
+            self.assertTrue(IntentJournal(db).reserve(**kwargs, term="2026-2"))
+            self.assertTrue(IntentJournal(db).reserve(**kwargs, term="2027/1"))
+
+    def test_old_term_and_class_fingerprint_blocks_after_upgrade(self):
+        import hashlib
+        import hmac
+        import json
+        import sqlite3
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "intents.sqlite3"
+            journal = IntentJournal(db)
+            identity = json.dumps(["jwmis.ncwu.edu.cn", "fictional", "2026-1",
+                                   "class", "CLASS-01"],
+                                  ensure_ascii=False, separators=(",", ":"))
+            old_fp = hmac.new(journal.salt, identity.encode("utf-8"),
+                              hashlib.sha256).hexdigest()
+            with closing(sqlite3.connect(db)) as con, con:
+                con.execute("INSERT INTO attempts (fingerprint, state) "
+                            "VALUES (?, 'pending')", (old_fp,))
+            self.assertFalse(journal.reserve(
+                school="https://jwmis.ncwu.edu.cn", account="fictional",
+                term="2026/1", course={"kch_id": "COURSE-01", "xkid": "CLASS-01"}))
+
+    def test_cancel_definitely_unsent_only_removes_own_fence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            journal = IntentJournal(Path(tmp) / "intents.sqlite3")
+            args = {"school": "example.invalid", "account": "fictional",
+                    "term": "2026-1", "course": TARGET}
+            self.assertTrue(journal.reserve(**args))
+            self.assertTrue(journal.cancel_definitely_unsent(**args))
+            self.assertFalse(journal.cancel_definitely_unsent(**args))
+            self.assertTrue(journal.reserve(**{**args, "term": "2026/1"}))
+            # An unrelated account can never release a pending intent.
+            self.assertFalse(journal.cancel_definitely_unsent(
+                **{**args, "account": "someone-else"}))
+            self.assertFalse(journal.reserve(**args))
+
     def test_missing_term_or_class_never_reserves(self):
         with tempfile.TemporaryDirectory() as tmp:
             store = IntentJournal(Path(tmp) / "intents.sqlite3")
@@ -126,6 +172,42 @@ class JournalTests(unittest.TestCase):
                 cfg["system"]["xnxq"] = "TEST-TERM"
                 Engine(cfg, Mock())._worker(adapter, {"name": "Display only"})
                 adapter.grab.assert_not_called()
+
+    def test_engine_pre_send_failure_is_not_a_physical_attempt(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.dict(os.environ, {"KINGO_INTENT_DB": str(Path(tmp) / "intents.sqlite3")}):
+                cfg = {"system": {"base_url": "https://example.invalid",
+                                  "xnxq": "TEST-TERM"}, "policy": {}}
+                adapter = Mock()
+                adapter.acct = {"user": "fictional", "name": "fictional"}
+                adapter.blocked = False
+                adapter.logged_in = True
+                adapter.grab.return_value = GrabResult(
+                    False, "auth", "login failed", write_attempted=False)
+                first = Engine(cfg, Mock())
+                first._worker(adapter, TARGET)
+                self.assertEqual(first.results[0]["attempts"], 0)
+                self.assertIs(first.results[0]["write_attempted"], False)
+                self.assertEqual(first.results[0]["code"], "auth")
+                # A confirmed no-send result cannot permanently fence a course.
+                restarted = Engine(cfg, Mock())
+                restarted._worker(adapter, TARGET)
+                self.assertEqual(adapter.grab.call_count, 2)
+
+    def test_engine_failed_login_before_reservation_is_unsent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.dict(os.environ, {"KINGO_INTENT_DB": str(Path(tmp) / "intents.sqlite3")}):
+                cfg = {"system": {"base_url": "https://example.invalid",
+                                  "xnxq": "TEST-TERM"}, "policy": {}}
+                adapter = Mock()
+                adapter.acct = {"user": "fictional", "name": "fictional"}
+                adapter.blocked = False
+                adapter.logged_in = False
+                eng = Engine(cfg, Mock())
+                eng._worker(adapter, TARGET)
+                adapter.grab.assert_not_called()
+                self.assertEqual(eng.results[0]["attempts"], 0)
+                self.assertFalse((Path(tmp) / "intents.sqlite3").exists())
 
     def test_engine_restart_must_not_send_second_write(self):
         with tempfile.TemporaryDirectory() as tmp:

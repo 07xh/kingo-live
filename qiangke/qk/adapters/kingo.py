@@ -578,6 +578,9 @@ class KingoAdapter(Adapter):
             if not hit:
                 self.log.warning(f"  未匹配：{c.get('name')} {c.get('teacher') or ''}")
                 continue
+            if not hit.get("xkid"):
+                self.log.warning("课程行缺少权威教学班号，不能仅凭课程号/展示班号补全 xkid")
+                continue
             c["xkid"] = c.get("xkid") or hit["xkid"]
             left = (hit.get("seats") or {}).get("left")
             tail = f" 余量 {left}" if left is not None else ""
@@ -665,7 +668,8 @@ class KingoAdapter(Adapter):
         t0 = time.time()
         with self.lock:
             if not self.logged_in and not self.login():
-                return GrabResult(False, AUTH, "登录失败", course, 0, time.time() - t0)
+                return GrabResult(False, AUTH, "登录失败", course, 0,
+                                  time.time() - t0, write_attempted=False)
             if not self.grab_request:
                 if not getattr(self, "_tpl_hint", False):
                     self._tpl_hint = True
@@ -680,7 +684,8 @@ class KingoAdapter(Adapter):
                 r = self._send(url, form, json_body, hd,
                                (self.grab_request or DEFAULT_GRAB).get("method", "POST"), retry_safe=False)
             except NetError as e:
-                return GrabResult(False, UNKNOWN, "提交响应丢失，请在官方已选列表核验", course, 0, time.time() - t0)
+                return GrabResult(False, UNKNOWN, "提交响应丢失，请在官方已选列表核验",
+                                  course, 1, time.time() - t0, write_attempted=True)
 
             raw = r.text or ""
             # Text acknowledgement, "already selected", and even HTTP 2xx
@@ -699,7 +704,7 @@ class KingoAdapter(Adapter):
             # Do not persist raw response text: it might contain identity,
             # cookies or other personal details.
             return GrabResult(False, UNKNOWN, description,
-                              course, 0, time.time() - t0)
+                              course, 1, time.time() - t0, write_attempted=True)
 
     def _render_tpl(self, tpl: dict, course: dict):
         pool = dict(course)

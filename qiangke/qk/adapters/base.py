@@ -27,6 +27,10 @@ class GrabResult:
     attempts: int = 0
     elapsed: float = 0.0
     raw: str = ""
+    # None: legacy adapter could not distinguish write/no-write.
+    # False: definitely rejected locally before any HTTP write.
+    # True: write transport was invoked (response may still be unknown).
+    write_attempted: Optional[bool] = None
 
     def __repr__(self) -> str:
         return f"<{self.code} {self.course.get('name','')} {self.msg[:40]!r} x{self.attempts}>"

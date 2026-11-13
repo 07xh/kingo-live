@@ -274,11 +274,12 @@ class ZfsoftAdapter(Adapter):
         t0 = time.time()
         with self.lock:
             if not self.logged_in and not self.login():
-                return GrabResult(False, AUTH, "登录失败", course, 0, time.time() - t0)
+                return GrabResult(False, AUTH, "登录失败", course, 0,
+                                  time.time() - t0, write_attempted=False)
             jxb = course.get("jxb_ids") or ""
             if not jxb:
                 return GrabResult(False, ERR, "缺少 jxb_ids（未解析到，需手工填）",
-                                  course, 0, time.time() - t0)
+                                  course, 0, time.time() - t0, write_attempted=False)
             data = {
                 "jxb_ids": jxb,
                 "kch_id": course.get("kch_id") or "",
@@ -296,7 +297,8 @@ class ZfsoftAdapter(Adapter):
                                       headers={"X-Requested-With": "XMLHttpRequest",
                                                "Accept": "application/json, text/javascript, */*; q=0.01"})
             except NetError as e:
-                return GrabResult(False, UNKNOWN, "提交响应丢失，请在官方已选列表核验", course, 0, time.time() - t0)
+                return GrabResult(False, UNKNOWN, "提交响应丢失，请在官方已选列表核验",
+                                  course, 1, time.time() - t0, write_attempted=True)
 
             raw = r.text or ""
             flag, _ = self._read_flag(raw)
@@ -314,7 +316,7 @@ class ZfsoftAdapter(Adapter):
                 description = "提交回执并非官方已选证明；请核对已选课程，禁止自动重发"
             # No raw response body or server-provided msg in a persisted result.
             return GrabResult(False, UNKNOWN, description,
-                              course, 0, time.time() - t0)
+                              course, 1, time.time() - t0, write_attempted=True)
 
     @staticmethod
     def _read_flag(raw: str):

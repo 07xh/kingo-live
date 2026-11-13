@@ -35,6 +35,18 @@ from dataclasses import dataclass, field, asdict
 from email.utils import parsedate_to_datetime
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
+import sys
+from pathlib import Path
+
+try:
+    from contracts.seat_diff import classify_seat_delta
+except ModuleNotFoundError:
+    _root = Path(__file__).resolve().parents[1]
+    if str(_root) not in sys.path:
+        sys.path.insert(0, str(_root))
+    from contracts.seat_diff import classify_seat_delta
+
+
 if TYPE_CHECKING:  # docs only - no runtime import, avoids a cycle
     from live_client import RawResponse, Offering  # noqa: F401
 
@@ -276,22 +288,14 @@ class ReleaseMonitor:
         current = {o.fingerprint(): o for o in offers}
         events: List[ReleaseEvent] = []
         for fp, o in current.items():
-            cur = o.remain or 0
             prev = self.snapshot.get(fp)
-            if prev is None:
-                if cur > 0:
-                    events.append(ReleaseEvent("new", o.course_id, o.class_id,
-                                               o.remain, None, now, poll_cost_ms))
+            kind = classify_seat_delta(
+                o, prev, first_observation=prev is None)
+            if kind is None:
                 continue
-            prv = prev.remain or 0
-            if prv <= 0 < cur:
-                kind = "reopened"
-            elif cur > prv:
-                kind = "increased"
-            else:
-                continue
-            events.append(ReleaseEvent(kind, o.course_id, o.class_id,
-                                       o.remain, prev.remain, now, poll_cost_ms))
+            events.append(ReleaseEvent(
+                kind, o.course_id, o.class_id, o.remain,
+                prev.remain if prev is not None else None, now, poll_cost_ms))
         self.snapshot = current
         self.events.extend(events)
         return events
