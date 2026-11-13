@@ -668,7 +668,8 @@ class KingoAdapter(Adapter):
         t0 = time.time()
         with self.lock:
             if not self.logged_in and not self.login():
-                return GrabResult(False, AUTH, "登录失败", course, 0, time.time() - t0)
+                return GrabResult(False, AUTH, "登录失败", course, 0,
+                                  time.time() - t0, write_attempted=False)
             if not self.grab_request:
                 if not getattr(self, "_tpl_hint", False):
                     self._tpl_hint = True
@@ -683,7 +684,8 @@ class KingoAdapter(Adapter):
                 r = self._send(url, form, json_body, hd,
                                (self.grab_request or DEFAULT_GRAB).get("method", "POST"), retry_safe=False)
             except NetError as e:
-                return GrabResult(False, UNKNOWN, "提交响应丢失，请在官方已选列表核验", course, 0, time.time() - t0)
+                return GrabResult(False, UNKNOWN, "提交响应丢失，请在官方已选列表核验",
+                                  course, 1, time.time() - t0, write_attempted=True)
 
             raw = r.text or ""
             # Text acknowledgement, "already selected", and even HTTP 2xx
@@ -702,7 +704,7 @@ class KingoAdapter(Adapter):
             # Do not persist raw response text: it might contain identity,
             # cookies or other personal details.
             return GrabResult(False, UNKNOWN, description,
-                              course, 0, time.time() - t0)
+                              course, 1, time.time() - t0, write_attempted=True)
 
     def _render_tpl(self, tpl: dict, course: dict):
         pool = dict(course)
