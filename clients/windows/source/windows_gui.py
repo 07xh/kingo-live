@@ -1588,6 +1588,16 @@ def main() -> int:
             run_packaged_gui_smoke()
             return 0
         except Exception:
+            # Only an opt-in offline smoke run may write a traceback.
+            # Normal GUI launches never generate diagnostic files.
+            trace_file = os.environ.get("KINGO_GUI_SMOKE_TRACE", "")
+            if trace_file:
+                import traceback
+                try:
+                    Path(trace_file).write_text(traceback.format_exc(),
+                                                encoding="utf-8")
+                except OSError:
+                    pass
             return 12
     if len(sys.argv) > 1:
         return 2
