@@ -24,6 +24,15 @@ class SelectionVerdict:
     reason: str
 
 
+def pending_receipt() -> SelectionVerdict:
+    """Same safe result for HTTP 200, server prose or selected-count changes.
+
+    It denotes an attempted write without exact official enrolled-course
+    evidence. It never authorizes a retry, clears a journal, or claims success.
+    """
+    return SelectionVerdict(VerificationState.PENDING, "official_readback_required")
+
+
 def _id(value: Any) -> str:
     if isinstance(value, bool) or not isinstance(value, (str, int)):
         raise ValueError("课程身份字段类型错误")
