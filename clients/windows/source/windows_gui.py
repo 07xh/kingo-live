@@ -1271,8 +1271,8 @@ def run_packaged_gui_smoke() -> None:
                 # It has its own window and must not replace the target plan.
                 offline_csv = Path(directory) / "course-plan.csv"
                 offline_csv.write_text(
-                    "课程号,课程名称,教学班号,可选人数,任课教师,上课时间,上课地点\\n"
-                    "000123,工程制图,05,6,老师,周一,教室\\n",
+                    "课程号,课程名称,教学班号,可选人数,任课教师,上课时间,上课地点\n"
+                    "000123,工程制图,05,6,老师,周一,教室\n",
                     encoding="utf-8-sig",
                 )
                 with patch.object(filedialog, "askopenfilename", return_value=str(offline_csv)):
