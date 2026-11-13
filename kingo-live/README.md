@@ -163,6 +163,19 @@ Response**（Response 只贴第一行完整记录就够）：
 `business.*` / `clock.header`，然后跑真实 `--probe → --sync-clock → --warmup →
 --watch-events → --auto --confirm` 全链，用官方回读命中率做验收。
 
+## 共享 SQLite 意图保护（PR #20）
+
+\`kingo-live\` 在保留原有 JSONL 状态历史的前提下，于真实 POST 之前
+调用 \`qiangke.qk.intent_journal.IntentJournal\`。数据库默认位于
+\`~/.kingo-assistant/intent-journal.sqlite3\`，或由三套旧 CLI 共同指定
+\`KINGO_INTENT_DB\`。测试可使用 \`journal.shared_intent_db\` 指定临时位置。
+
+跨工具防重的必要条件是**同一个数据库路径、教务主机、账号和学期字符串**。
+`2026-1` 与 `2026-2027-1` 目前不会自动互认。
+Windows 仍是独立 \`AttemptJournal\`，真实华水写入适配器尚未启用，
+不能宣称四套执行器已经完全共用状态库。见
+\`docs/architecture/verified-four-client-integration-2026-11-14.md\`。
+
 ## 策略层：为什么这五项才是真正抬成功率的
 
 上一轮分析把成功率拆成六道门，客户端只能动 P1/P2/P4/P6，P5 由服务端分配规则决定。
@@ -199,9 +212,10 @@ RFC 7231 的 `Date` 头**只有 1 秒分辨率**，`ClockSync.precision_ms` 如�
 | `confirmed` | `stop` | 官方名单回读命中，链路结束 |
 | `pending` / `unknown` | `halt` | 结果未知：写 `pending` 意图并停机，等 `--reconcile`，**绝不自动重试** |
 
-`--reconcile` 不存明文课程号：读官方名单每一行，用同一 HMAC 盐重算指纹，与 journal
-里的 pending 指纹比对，命中写 `confirmed`、未命中写 `rejected`。实测两条路径都覆盖：
-提交实际成功但回读 503 → 对账后 `confirmed`；提交未落地 → 对账后 `rejected`。
+\`--reconcile\` 只在已验收的官方完整已选名单中找到**课程号与教学班号精确一致**、
+且响应账号和学期均与当前登录上下文吻合时确认成功。
+官方列表中暂时没有目标、网络失败或返回结构不可信时，保持 \`pending\`。
+名单缺失**不是**明确拒绝，也不允许因本地超时自动重发。
 
 ## 占位符：怎么定位 / 已知常量 / 怎么确认填对了
 
@@ -285,9 +299,11 @@ submit_ms    决定提交 → 提交响应头
 confirm_ms   提交 → 官方已选名单里精确命中 course_id + class_id
 ```
 
-传输层 200 只写 `pending` 意图，**只有名单命中才写 `confirmed`**。名单读成功但目标
-缺失写 `rejected`（明确业务失败）；名单读本身失败保持 `pending`（结果未知），停机等
-`--reconcile`。意图日志只存 HMAC 指纹，不存 Cookie、课程号、响应体。
+传输层 200 并不构成成功证明。物理提交前必须先持久写入 \`pending\` 意图；
+只有官方完整明细精确命中才写 \`confirmed\`，任何未核实结果均保持待核验。
+原有 JSONL 保留状态历史；新增复用 \`qiangke/\` 与 \`ncwu/\` 的
+SQLite 原子提交意图闸门。共享闸门不会因 JSONL 标记拒绝而自动清空。
+敏感 Cookie、课程号或响应正文不会写入意图数据库。
 
 ## P5 敏感度：客户端提速到底有没有用
 
