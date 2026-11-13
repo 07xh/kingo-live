@@ -683,16 +683,23 @@ class KingoAdapter(Adapter):
                 return GrabResult(False, UNKNOWN, "提交响应丢失，请在官方已选列表核验", course, 0, time.time() - t0)
 
             raw = r.text or ""
-            code = self._classify(raw, r.url)
-            # The endpoint may acknowledge even a nonexistent course. Neither
-            # generic success text nor an unrecognized response proves enrollment.
-            if code in (OK, ERR) or not 200 <= r.status < 300:
-                code = UNKNOWN if code != AUTH else AUTH
-            res = GrabResult(code in (OK, ENROLLED), code, raw.strip()[:200] or f"HTTP {r.status}",
-                             course, 0, time.time() - t0, raw[:600])
-            if code == AUTH:
+            # Text acknowledgement, "already selected", and even HTTP 2xx
+            # are NOT official per-course enrollment-list evidence.
+            # Keep the classification solely for session/cooldown diagnostics;
+            # every physical write result is UNKNOWN until independently read back.
+            receipt_code = self._classify(raw, r.url)
+            if receipt_code == AUTH:
                 self.logged_in = False
-            return res
+            if r.status == 429:
+                description = "服务端限制请求（HTTP 429）；停止重发并人工核验"
+            elif receipt_code == AUTH:
+                description = "服务端提示会话失效；提交结果未知，请人工核验"
+            else:
+                description = "提交回执并非官方已选证明；请核对已选课程，禁止自动重发"
+            # Do not persist raw response text: it might contain identity,
+            # cookies or other personal details.
+            return GrabResult(False, UNKNOWN, description,
+                              course, 0, time.time() - t0)
 
     def _render_tpl(self, tpl: dict, course: dict):
         pool = dict(course)
