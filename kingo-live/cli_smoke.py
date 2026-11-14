@@ -51,6 +51,7 @@ def main() -> int:
     cfg.update({
         "base_url": f"http://127.0.0.1:{port}",
         "account_scope": "fictional-cli-smoke-account",
+        "shared_intent_db": str(d / "shared-intents.sqlite3"),
         "cookie": "",
         "verify_tls": False,
         "budget": {"rate": 200, "burst": 50, "retry_after_ms": 50,
