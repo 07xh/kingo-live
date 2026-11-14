@@ -37,7 +37,7 @@ CHANNEL_WEIGHTS: Dict[str, float] = {
     "zxxq": 0.5,                 # structured selection payload
 }
 STALE_PENALTY = 0.30             # a stale read keeps 30% of its weight
-CONFIRM_THRESHOLD = 1.20         # >= 2 independent channels, or 1 strong + 1 weak
+CONFIRM_THRESHOLD = 1.20         # legacy report metadata; not confirmation authority
 
 
 @dataclass
@@ -50,10 +50,13 @@ class Evidence:
     stale: bool = False                # cached / older than the submit
     source: str = ""
     at: float = field(default_factory=time.time)
+    semester: str = ""
+    account_scope: str = ""
 
     def public(self) -> dict:
         d = asdict(self)
         d["at"] = round(self.at, 3)
+        d["account_scope_present"] = bool(d.pop("account_scope", ""))
         return d
 
 
@@ -91,6 +94,10 @@ def fuse(target: Dict[str, str], evidence: Iterable[Evidence]) -> Verdict:
     """
     cid = str(target.get("course_id") or "").strip()
     cls = str(target.get("class_id") or "").strip()
+    semester = str(target.get("semester") or "").strip()
+    account = str(target.get("account_scope") or "").strip()
+    minimum_at = float(target.get("intent_at") or 0.0)
+    scope_verified = bool(semester and account)
     if not cid or not cls:
         return Verdict(cid, cls, "unknown", 0.0, 0.0, 0.0, [], [],
                        "missing exact course or teaching-class identity",
@@ -98,7 +105,10 @@ def fuse(target: Dict[str, str], evidence: Iterable[Evidence]) -> Verdict:
 
     rows = [e for e in evidence
             if e.course_id == cid and e.class_id == cls
-            and e.channel in CHANNEL_WEIGHTS and e.present is not None]
+            and e.channel in CHANNEL_WEIGHTS and e.present is not None
+            and (not semester or e.semester == semester)
+            and (not account or e.account_scope == account)
+            and e.at >= minimum_at]
     # Repeated responses from one channel are NOT independent evidence.
     # A channel contradicting itself also cannot support confirmation.
     by_channel: Dict[str, List[Evidence]] = {}
@@ -142,10 +152,14 @@ def fuse(target: Dict[str, str], evidence: Iterable[Evidence]) -> Verdict:
         v, conf, reason, action = ("contradicted", 0.5,
             "fresh official selection conflicts with another fresh class-level read",
             "human_check")
-    elif official_positive:
+    elif official_positive and scope_verified:
         v, conf, reason, action = ("confirmed", 0.85,
-            "fresh official selected-course list matches exact course and class",
+            "fresh official list matches exact class, account and semester",
             "terminal")
+    elif official_positive:
+        v, conf, reason, action = ("pending", 0.4,
+            "official record has no verified account and semester scope",
+            "keep_pending")
     elif official_negative and pos > 0:
         v, conf, reason, action = ("contradicted", 0.5,
             "fresh official list disagrees with class-level evidence",
@@ -192,23 +206,35 @@ def channel_plan() -> dict:
     return {"channels": {k: {"weight": w} for k, w in CHANNEL_WEIGHTS.items()},
             "stale_penalty": STALE_PENALTY,
             "confirm_threshold": CONFIRM_THRESHOLD,
+            "confirm_threshold_is_advisory_only": True,
+            "confirmation_requires": ["official_list", "exact_class_id",
+                                      "account_scope", "semester", "fresh"],
             "all_read_only": True,
-            "note": "parallel GETs only; a lagging list is down-weighted, "
-                    "never treated as proof of failure"}
+            "note": "official exact-class evidence must match account and "
+                    "semester; other channels are supporting clues"}
 
 
 def demo() -> dict:
-    t1 = {"course_id": "C1", "class_id": "01"}
-    t2 = {"course_id": "C2", "class_id": "02"}
-    t3 = {"course_id": "C3", "class_id": "03"}
+    scope = {"semester": "2026-T1", "account_scope": "DEMO"}
+    t1 = {"course_id": "C1", "class_id": "01", **scope}
+    t2 = {"course_id": "C2", "class_id": "02", **scope}
+    t3 = {"course_id": "C3", "class_id": "03", **scope}
     base = time.time()
     ev = [
-        Evidence("official_list", "C1", "01", False, 40.0, True, "cached", base),
-        Evidence("wap_schedule", "C1", "01", True, 55.0, False, "wap", base),
-        Evidence("credit_summary", "C1", "01", True, 61.0, False, "credit", base),
-        Evidence("official_list", "C2", "02", False, 38.0, False, "fresh", base),
-        Evidence("wap_schedule", "C2", "02", True, 52.0, False, "wap", base),
-        Evidence("official_list", "C3", "03", False, 41.0, True, "cached", base),
+        Evidence("official_list", "C1", "01", False, 40.0, True,
+                 "cached", base, **scope),
+        Evidence("wap_schedule", "C1", "01", True, 55.0, False,
+                 "wap", base, **scope),
+        Evidence("credit_summary", "C1", "01", True, 61.0, False,
+                 "credit", base, **scope),
+        Evidence("official_list", "C1", "01", True, 25.0, False,
+                 "fresh_official", base + 1, **scope),
+        Evidence("official_list", "C2", "02", False, 38.0, False,
+                 "fresh", base, **scope),
+        Evidence("wap_schedule", "C2", "02", True, 52.0, False,
+                 "wap", base, **scope),
+        Evidence("official_list", "C3", "03", False, 41.0, True,
+                 "cached", base, **scope),
     ]
     verdicts = [fuse(t, ev).public() for t in (t1, t2, t3)]
     decisions = [d.as_dict() for d in reconcile([t1, t2, t3], ev)]

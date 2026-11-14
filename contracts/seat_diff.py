@@ -9,7 +9,9 @@ from typing import Any, Optional
 
 
 def remaining_count(offering: Any) -> Optional[int]:
-    value = getattr(offering, "remain", None)
+    # Canonical CourseOffering.remaining takes precedence over legacy remain.
+    value = (getattr(offering, "remaining") if hasattr(offering, "remaining")
+             else getattr(offering, "remain", None))
     if isinstance(value, bool):
         return None
     if isinstance(value, int):

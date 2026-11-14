@@ -1,14 +1,12 @@
 name: ci
 
 on:
-  # Main receives post-merge verification. Feature branches are checked by
-  # pull_request, not a second identical run for the same branch push.
   push:
     branches: [main]
   pull_request:
   workflow_dispatch:
 
-# Superseded commits should not consume private-repository runner minutes.
+# Prevent redundant runs for successive commits on the same PR.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
@@ -72,8 +70,13 @@ jobs:
           python test_ops.py
           python test_fingerprint.py
           python test_phase2.py
-          # Phase 3 may arrive through a concurrent ops feature merge.
-          if [ -f test_phase3.py ]; then python test_phase3.py; fi
+          python test_phase3.py
+          python test_hardening.py -v
+      - name: Ops canonical snapshots diagnostics (offline)
+        shell: bash
+        run: |
+          python -m ops.readonly_diagnostics --self-test
+          python -m unittest ops.test_readonly_diagnostics -v
       - name: Offline simulation and P5 matrix
         shell: bash
         working-directory: bench

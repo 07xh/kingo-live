@@ -26,14 +26,14 @@ try:                                                   # package or direct run
     from .preflight import TicketPool, BodyPrebuilder, ConnectionShard, \
         HighResClock, assemble
     from .seat_events import AdaptivePoller, ReleaseMonitor, TargetRanker, \
-        IntentGate, EventDriver, Offering, Decision
+        IntentGate, EventDriver, Offering, Decision, parse_retry_after_ms
     from .crosscheck import Evidence, fuse, reconcile
 except ImportError:                                    # pragma: no cover
     from endpoints import Endpoint, probe_all
     from preflight import TicketPool, BodyPrebuilder, ConnectionShard, \
         HighResClock, assemble
     from seat_events import AdaptivePoller, ReleaseMonitor, TargetRanker, \
-        IntentGate, EventDriver, Offering, Decision
+        IntentGate, EventDriver, Offering, Decision, parse_retry_after_ms
     from crosscheck import Evidence, fuse, reconcile
 
 __all__ = ["Phase", "Mission", "Plan", "Orchestrator", "SimpleResponse",
@@ -261,7 +261,10 @@ class Orchestrator:
         """One read-only catalog poll through the event pipeline."""
         self.phase.require("watch", "arm")
         offers = parse_offers(response.body) if response.status == 200 else []
-        d = self.driver.poll(offers, response.ttfb_ms, response.status)
+        retry_ms = (parse_retry_after_ms(response.headers)
+                    if response.status in (429, 503) else 0.0)
+        d = self.driver.poll(offers, response.ttfb_ms, response.status,
+                             retry_after_ms=retry_ms)
         self.observations.append({
             "t": round(time.time(), 3), "status": response.status,
             "offers": len(offers), "decision": d.kind})
@@ -285,6 +288,12 @@ class Orchestrator:
         if key in self._executed:
             return {"acted": False,
                     "reason": "order already executed for this target"}
+        if not (str(target.get("course_id") or "").strip()
+                and str(target.get("class_id") or "").strip()):
+            self.driver.gate.mark_pending(target, "missing exact teaching-class identity")
+            self.orders.append({"target": target, "acted": False,
+                                "reason": "missing exact teaching-class identity"})
+            return {"acted": False, "reason": "missing exact teaching-class identity"}
         if self.mission.executor is None:
             self.driver.gate.mark_pending(target, "monitor-only: no executor")
             self.orders.append({"target": target, "acted": False,
@@ -294,6 +303,9 @@ class Orchestrator:
             if self.plan.prebuild else None
         order = {"target": target, "body_prebuilt": body is not None,
                  "channel": self.plan.channel}
+        # The callback may have sent a physical request before it raises.
+        # Fence this order BEFORE invoking the external executor, not after.
+        self._executed.add(key)
         try:
             result = self.mission.executor(target)
             order["result"] = str(result)
@@ -304,7 +316,6 @@ class Orchestrator:
             self.orders.append(order)
             return order
         order["acted"] = True
-        self._executed.add(key)
         self.orders.append(order)
         return order
 

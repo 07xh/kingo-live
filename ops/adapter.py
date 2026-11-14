@@ -33,6 +33,30 @@ REQUIRED = ("course_id",)
 _PRIORITY_RANGE = (1, 99)
 
 
+def _bool_flag(value: Any) -> bool:
+    """Parse explicit enabled flags; nonempty strings are not all True."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int) and value in (0, 1):
+        return bool(value)
+    if isinstance(value, str):
+        flag = value.strip().lower()
+        if flag in ("true", "yes", "on", "1"):
+            return True
+        if flag in ("false", "no", "off", "0"):
+            return False
+    raise ValueError("enabled must be a boolean or an explicit true/false flag")
+
+
+def _identity_text(value: Any, *, field: str, required: bool) -> str:
+    if isinstance(value, bool) or not isinstance(value, (str, int)):
+        raise ValueError(f"{field} must be a string or integer identifier")
+    result = str(value).strip()
+    if required and result.lower() in ("", "none", "null", "unknown", "-"):
+        raise ValueError(f"target missing trustworthy {field}")
+    return result
+
+
 def normalize_target(raw: Dict[str, Any]) -> Dict[str, Any]:
     """Map one raw executor target onto the ops contract.
 
@@ -49,18 +73,28 @@ def normalize_target(raw: Dict[str, Any]) -> Dict[str, Any]:
             out[str(k)] = v          # unknown keys pass through untouched
             continue
         if canon in seen:
-            # Two legacy clients may supply both e.g. kcid and course_id.
-            # Only identical values are safe; first-wins silently chooses the
-            # wrong course or teaching class when the aliases disagree.
-            if str(out[canon]).strip() != str(v).strip():
+            previous = out[canon]
+            # Distinct aliases for one identity may arrive from different HAR
+            # exporters. Never pick an arbitrary identity on disagreement.
+            if canon in ("course_id", "class_id", "term"):
+                equal = (_identity_text(previous, field=canon, required=False)
+                         == _identity_text(v, field=canon, required=False))
+            elif canon == "enabled":
+                equal = _bool_flag(previous) == _bool_flag(v)
+            else:
+                equal = str(previous).strip() == str(v).strip()
+            if not equal:
                 raise ValueError(f"conflicting aliases for {canon}")
             continue
         seen.add(canon)
         out[canon] = v
     for req in REQUIRED:
-        if not str(out.get(req, "")).strip():
+        if req not in out:
             raise ValueError(f"target missing {req!r}: keys={sorted(raw)}")
+        out[req] = _identity_text(out[req], field=req, required=True)
     try:
+        if isinstance(out.get("priority", 1), bool):
+            raise ValueError
         pr = int(out.get("priority", 1))
     except (TypeError, ValueError):
         raise ValueError(f"priority not an integer: {out.get('priority')!r}")
@@ -68,9 +102,10 @@ def normalize_target(raw: Dict[str, Any]) -> Dict[str, Any]:
         raise ValueError(f"priority {pr} outside {_PRIORITY_RANGE}")
     out["priority"] = pr
     out.setdefault("enabled", True)
-    out["enabled"] = bool(out["enabled"])
+    out["enabled"] = _bool_flag(out["enabled"])
     if "class_id" in out:
-        out["class_id"] = str(out["class_id"]).strip()
+        out["class_id"] = _identity_text(
+            out["class_id"], field="class_id", required=False)
     return out
 
 
