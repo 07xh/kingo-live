@@ -114,6 +114,46 @@ class ExistingExecutorGatewayTests(unittest.TestCase):
         with self.assertRaises(EnrollmentNotReady):
             self.make(lambda target: None).validate_ready()
 
+    def test_permission_revoked_after_engine_creation_blocks_execution(self):
+        calls = []
+        engine = self.make(calls.append)
+        engine.validate_ready()
+        self.source.official_write_verified = False
+        with self.assertRaises(EnrollmentNotReady):
+            engine.validate_ready()
+        self.assertEqual(calls, [])
+
+    def test_account_switched_after_engine_creation_blocks_execution(self):
+        calls = []
+        engine = self.make(calls.append)
+        engine.validate_ready()
+        self.source.verified_account_id = "other-fictional-student"
+        with self.assertRaises(EnrollmentNotReady):
+            engine.validate_ready()
+        with self.assertRaises(EnrollmentNotReady):
+            asyncio.run(engine.gateway.submit_once(self.target))
+        self.assertEqual(calls, [])
+
+    def test_readback_rechecks_identity_after_await(self):
+        engine = self.make(lambda target: None)
+
+        async def changed_account_during_read():
+            self.source.verified_account_id = "other-fictional-student"
+            return {("COURSE-A", "CLASS-01")}
+
+        self.source.read_enrollments = changed_account_during_read
+        with self.assertRaises(EnrollmentNotReady):
+            asyncio.run(engine.gateway.read_enrollments())
+
+    def test_readback_still_allowed_after_write_permission_revoked(self):
+        engine = self.make(lambda target: None)
+        self.source.official_write_verified = False
+        self.source.selected.add(("COURSE-A", "CLASS-01"))
+        self.assertEqual(
+            asyncio.run(engine.gateway.read_enrollments()),
+            {("COURSE-A", "CLASS-01")},
+        )
+
     def test_direct_submit_without_prewrite_journal_is_forbidden(self):
         called = []
         gateway = self.make(called.append).gateway
