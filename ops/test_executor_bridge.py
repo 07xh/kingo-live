@@ -95,12 +95,31 @@ class TestQkExecutor(unittest.TestCase):
         c = ad.calls[0]
         self.assertEqual(c["kch_id"], "C1")
         self.assertEqual(c["jxb_ids"], ["J1"])
+        self.assertEqual(c["xkid"], "J1")
         # receipt shape
         self.assertTrue(receipt["ok"])
         self.assertEqual(receipt["code"], "success")
         self.assertIs(receipt["write_attempted"], True)
         self.assertEqual(receipt["executor"], "qk:kingo")
         self.assertEqual(receipt["target"]["course_id"], "C1")
+
+    def test_invalid_or_conflicting_class_is_proven_unsent(self):
+        ad = FakeQkAdapter()
+        ex = eb.QkExecutor(ad)
+        for target in (
+            {"course_id": "C1", "class_id": ""},
+            {"course_id": "C1", "class_id": ["CLASS-01"]},
+            {"course_id": "C1", "class_id": "CLASS-01",
+             "xkid": "OTHER-CLASS"},
+            {"course_id": "C1", "class_id": "unknown"},
+            {"course_id": "", "class_id": "CLASS-01"},
+        ):
+            with self.subTest(target=target):
+                receipt = ex(target)
+                self.assertFalse(receipt["ok"])
+                self.assertIs(receipt["write_attempted"], False)
+        self.assertEqual(ad.calls, [])
+        self.assertEqual(ad.opens, 0)
 
     def test_login_failure_raises_before_write(self):
         ad = FakeQkAdapter()
@@ -146,17 +165,20 @@ class TestQkExecutor(unittest.TestCase):
 
 
 class TestSniperExecutor(unittest.TestCase):
-    def test_single_fire_maps_ids(self):
+    def test_class_only_hint_never_authorizes_sniper_write(self):
         module = FakeSniperModule()
         ex = eb.SniperExecutor(importer=lambda: module,
                                cfg={"cookie": "x"})
         receipt = ex({"course_id": "080118", "class_id": "01"})
-        self.assertEqual(module.Sniper.__init__ and ex._sniper.fires,
-                         [("080118", "01", "0")])
-        self.assertTrue(receipt["ok"])
-        # transport ack only => unknown until verify decides
-        self.assertEqual(receipt["code"], "unknown")
-        self.assertEqual(ex._sniper.prepared, 1)
+        self.assertFalse(receipt["ok"])
+        self.assertEqual(receipt["code"], "error")
+        self.assertIs(receipt["write_attempted"], False)
+        # No login/preparation/network is started for an unsupported write.
+        self.assertIsNone(ex._sniper)
+        direct = ex._fire({"course_id": "080118", "class_id": "01"})
+        self.assertFalse(direct["ok"])
+        self.assertEqual(direct["code"], "unsupported_class_write")
+        self.assertIs(direct["write_attempted"], False)
 
     def test_gate_closed_blocks_write(self):
         sniper = FakeSniperModule.Sniper({"cookie": "x"})
@@ -189,8 +211,8 @@ class TestRepositoryImports(unittest.TestCase):
         with patch.object(hs_sniper, "Sniper", FakeSniperModule.Sniper):
             receipt = eb.SniperExecutor(cfg={"cookie": "FAKE"})(
                 {"course_id": "C", "class_id": "J"})
-        self.assertEqual(receipt["code"], "unknown")
-        self.assertIs(receipt["write_attempted"], True)
+        self.assertEqual(receipt["code"], "error")
+        self.assertIs(receipt["write_attempted"], False)
 
 
 class TestEvidenceMapping(unittest.TestCase):

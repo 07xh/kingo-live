@@ -675,8 +675,16 @@ class KingoAdapter(Adapter):
                     self._tpl_hint = True
                     self.log.info("未配 grab_request，用内置默认模板（该 action 已探测存在）；"
                                   "若返回参数错误，跑 import-curl 覆盖")
-            url, form, json_body, headers = self._render_tpl(
-                self.grab_request or DEFAULT_GRAB, course)
+            try:
+                if not self._exact_class_id(course):
+                    raise ValueError("缺少精确教学班号")
+                url, form, json_body, headers = self._render_tpl(
+                    self.grab_request or DEFAULT_GRAB, course)
+            except ValueError:
+                # Invalid/ambiguous class identity is proven unsent: never
+                # stringify a list like "['CLASS-01']" into a POST field.
+                return GrabResult(False, ERR, "教学班身份缺失、歧义或字段冲突，未发送请求",
+                                  course, 0, time.time() - t0, write_attempted=False)
             hd = dict(headers)
             hd.setdefault("X-Requested-With", "XMLHttpRequest")
             hd.setdefault("Referer", self.base_url + "/hsjw/")
@@ -706,16 +714,54 @@ class KingoAdapter(Adapter):
             return GrabResult(False, UNKNOWN, description,
                               course, 1, time.time() - t0, write_attempted=True)
 
+    @staticmethod
+    def _exact_class_id(course: dict) -> str:
+        """Resolve ONE authoritative class code; never stringify collections.
+
+        Preserve the legacy jxb_ids list input contract but refuse zero/many
+        entries or disagreement with a separately supplied xkid. No network.
+        """
+        if not isinstance(course, dict):
+            raise ValueError("课程目标结构错误")
+        raw_list = course.get("jxb_ids")
+        if isinstance(raw_list, (list, tuple)):
+            if len(raw_list) != 1:
+                raise ValueError("教学班列表必须包含恰好一个明确代码")
+            raw_list = raw_list[0]
+
+        def exact(value):
+            if value is None or value == "":
+                return ""
+            if type(value) not in (str, int):
+                raise ValueError("教学班代码类型错误")
+            code = str(value).strip()
+            if (not code or len(code) > 100
+                    or code.lower() in ("none", "null", "unknown", "-")
+                    or any(ord(ch) < 32 for ch in code)):
+                raise ValueError("教学班代码不可信")
+            return code
+
+        xkid = exact(course.get("xkid"))
+        legacy_id = exact(raw_list)
+        if xkid and legacy_id and xkid != legacy_id:
+            raise ValueError("教学班代码冲突")
+        return xkid or legacy_id
+
     def _render_tpl(self, tpl: dict, course: dict):
+        class_id = self._exact_class_id(course)
+        # Read-only catalog templates legitimately pass an empty course.
+        # The grab() write path requires class_id before calling here.
         pool = dict(course)
         pool.setdefault("user", self.acct.get("user", ""))
         pool.setdefault("name", course.get("name", ""))
         pool.setdefault("kch_id", course.get("kch_id", ""))
-        pool.setdefault("jxb_ids", course.get("jxb_ids", ""))
-        pool.setdefault("xkid", course.get("xkid") or course.get("jxb_ids") or "")
-        # 常见同义字段名，避免模板里 {jxbid}/{jxb_id}/{classid} 取不到值
+        # All class aliases must render the SAME scalar, not a Python list.
+        pool["jxb_ids"] = class_id
+        pool["xkid"] = class_id
         for alias in ("jxb_id", "jxbid", "classid", "class_id", "bjid", "kcid"):
-            pool.setdefault(alias, pool["xkid"])
+            if alias in pool and pool[alias] not in (None, "", class_id):
+                raise ValueError("教学班别名字段冲突")
+            pool[alias] = class_id
 
         def sub(v):
             if not isinstance(v, str):

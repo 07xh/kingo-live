@@ -53,7 +53,9 @@ class TransportSafetyTests(unittest.TestCase):
                     with patch.object(engine, 'fire_one', return_value=(
                             True, 'unverified', 1)) as sent:
                         with patch('hs_sniper.time.sleep'):
-                            self.assertIsNone(engine.fire('COURSE-101', '002'))
+                            # A course-only write can create one durable
+                            # reservation, but a class-specific hint cannot.
+                            self.assertIsNone(engine.fire('COURSE-101'))
                             self.assertIsNone(engine.fire('COURSE-101', '003'))
                             sent.assert_called_once()
                 with patch.object(hs_xk, 'get_cookie', return_value='fictional'), \
@@ -67,6 +69,26 @@ class TransportSafetyTests(unittest.TestCase):
                     with self.assertRaises(SystemExit):
                         hs_xk.main()
                     submit.assert_not_called()
+
+    def test_explicit_class_hint_never_reaches_sniper_submit(self):
+        engine = Sniper({'cookie': 'fictional', 'concurrency': 1})
+        with patch.object(engine.k, 'submit') as send:
+            ok, message, elapsed = engine.fire_one(
+                'COURSE-101', skbjdm_hint='CLASS-02')
+            self.assertFalse(ok)
+            self.assertEqual(elapsed, 0.0)
+            self.assertIn('未发送', message)
+            send.assert_not_called()
+
+    def test_class_only_standalone_fire_does_not_reserve_or_submit(self):
+        engine = Sniper({'cookie': 'fictional', 'concurrency': 1})
+        with tempfile.TemporaryDirectory() as td:
+            db = os.path.join(td, 'intents.sqlite3')
+            with patch.dict(os.environ, {'KINGO_INTENT_DB': db}):
+                with patch.object(engine, 'fire_one') as send:
+                    self.assertIsNone(engine.fire('COURSE-101', 'CLASS-02'))
+                    send.assert_not_called()
+                self.assertFalse(os.path.exists(db))
 
     def test_debug_receipts_never_log_private_response(self):
         engine = Sniper({'cookie': 'fictional', 'concurrency': 1})
