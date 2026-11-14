@@ -17,7 +17,11 @@ Zero third-party dependencies. Python 3.10+.
 """
 from __future__ import annotations
 
+import os
+import sys
 import time
+from pathlib import Path
+from urllib.parse import urlsplit
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
@@ -99,12 +103,23 @@ class Mission:
     sessions: int = 1
     respect_retry_after: bool = True
     executor: Optional[Callable[[Dict[str, Any]], Any]] = None
+    # Required only for write callbacks: these values must be obtained from
+    # verified school/account context, never inferred from display labels.
+    verified_school_origin: str = ""
+    verified_account_id: str = ""
+    enrollment_semester: str = ""
+    shared_intent_db: Optional[str] = None
     catalog_path: str = "/hsjw//wap/mycourseschedule.action"
     ticket_names: Tuple[str, ...] = ("token", "csrf", "_csrf")
 
     def public(self) -> dict:
         d = {k: v for k, v in self.__dict__.items()
-             if k not in ("executor", "targets")}
+             if k not in ("executor", "targets", "verified_account_id",
+                          "shared_intent_db")}
+        d["verified_account_id"] = (
+            "<configured>" if self.verified_account_id else "<missing>")
+        d["shared_intent_db"] = (
+            "<configured>" if self.shared_intent_db else "<default>")
         d["targets"] = [
             {k: ("<redacted>" if k in ("cookie", "token", "password")
                  else v) for k, v in t.items()}
@@ -303,9 +318,43 @@ class Orchestrator:
             if self.plan.prebuild else None
         order = {"target": target, "body_prebuilt": body is not None,
                  "channel": self.plan.channel}
-        # The callback may have sent a physical request before it raises.
-        # Fence this order BEFORE invoking the external executor, not after.
+        # Process-local gates alone cannot protect a restarted process or a
+        # second legacy executable. The one shared SQLite/HMAC reservation is
+        # durable and must complete before an external executor can send.
+        # Fence the local decision before both reservation and callback, so
+        # ambiguous persistence errors never authorize a replay.
         self._executed.add(key)
+        try:
+            origin = self.mission.verified_school_origin
+            account = self.mission.verified_account_id
+            term = self.mission.enrollment_semester
+            parsed = urlsplit(origin)
+            if (parsed.scheme not in ("https", "http") or not parsed.netloc
+                    or not account.strip() or not term.strip()):
+                raise ValueError("verified school/account/term scope required")
+            repo_root = str(Path(__file__).resolve().parents[1])
+            if repo_root not in sys.path:
+                sys.path.insert(0, repo_root)
+            from qiangke.qk.intent_journal import IntentJournal
+            database = (os.environ.get("KINGO_INTENT_DB")
+                        or self.mission.shared_intent_db
+                        or str(Path.home() / ".kingo-assistant" / "intent-journal.sqlite3"))
+            reserved = IntentJournal(database).reserve(
+                school=origin, account=account, term=term,
+                course={"kch_id": str(target["course_id"]),
+                        "xkid": str(target["class_id"])})
+        except Exception as exc:
+            order["acted"] = False
+            order["reason"] = f"shared_intent_unavailable:{type(exc).__name__}"
+            self.driver.gate.mark_pending(target, order["reason"])
+            self.orders.append(order)
+            return order
+        if not reserved:
+            order["acted"] = False
+            order["reason"] = "shared_intent_pending_needs_official_reconciliation"
+            self.driver.gate.mark_pending(target, order["reason"])
+            self.orders.append(order)
+            return order
         try:
             result = self.mission.executor(target)
             order["result"] = str(result)
