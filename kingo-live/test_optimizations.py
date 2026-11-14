@@ -158,6 +158,7 @@ class OptimizationTests(unittest.TestCase):
         c["warmup"]["keep_alive"] = keep_alive
         c["budget"]["database"] = str(self.dir / f"budget_{self.tag()}.sqlite")
         c["journal"]["path"] = str(self.dir / f"journal_{self.tag()}.jsonl")
+        c["shared_intent_db"] = str(self.dir / f"shared_{self.tag()}.sqlite3")
         c["targets"] = targets or [{"course_id": "C001", "class_id": "T01"}]
         c["strategy"].update(strategy)
         c["strategy"]["poll_interval_ms"] = 1.0
