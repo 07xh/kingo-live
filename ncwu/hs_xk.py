@@ -59,7 +59,7 @@ from pathlib import Path
 
 # Share the same durable per-intent guard with the Qiangke CLI.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from qiangke.qk.intent_journal import IntentJournal
+from contracts.intent_bridge import reserve_shared_intent
 from contracts.enrollment_evidence import pending_receipt, VerificationState
 
 BASE = "https://jwmis.ncwu.edu.cn/hsjw/"
@@ -380,14 +380,17 @@ def main():
         if not args.dry_run:
             if not all(str(form.get(key) or "").strip() for key in ("xh", "xn", "xq")):
                 sys.exit("缺少官方账号或学期字段，禁止发送选课提交。")
-            journal_path = (os.environ.get("KINGO_INTENT_DB")
-                            or Path.home() / ".kingo-assistant" / "intent-journal.sqlite3")
             try:
-                journal = IntentJournal(journal_path)
-                reserved = journal.reserve(
+                reserved = reserve_shared_intent(
                     school="https://jwmis.ncwu.edu.cn",
-                    account=str(form["xh"]), term=f"{form['xn']}-{form['xq']}",
-                    course={"kch_id": str(args.kcdm), "xkid": str(args.skbjdm)},
+                    account=str(form["xh"]),
+                    term=f"{form['xn']}-{form['xq']}",
+                    course_id=str(args.kcdm),
+                    class_id=str(args.skbjdm or ""),
+                    # This legacy action submits a course code; the class
+                    # hint is optional. Preserve that interface while using
+                    # the same durable course-level reservation.
+                    require_class=False,
                 )
             except (OSError, ValueError, sqlite3.Error) as exc:
                 sys.exit(f"持久化提交保护失败，未发送请求：{type(exc).__name__}")

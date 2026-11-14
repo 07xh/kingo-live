@@ -101,21 +101,32 @@ jobs:
         run: |
           python -m pip install -r requirements.txt "pyinstaller>=6,<7"
           if ($LASTEXITCODE -ne 0) { throw "Desktop dependencies failed" }
-      - name: Unit tests and Python GUI smoke
+      - name: Windows desktop unit tests
         shell: pwsh
+        timeout-minutes: 8
         working-directory: clients/windows/source
         run: |
-          python -m unittest discover -s tests -q
+          python -m unittest discover -s tests -v
           if ($LASTEXITCODE -ne 0) { throw "Windows desktop unit tests failed" }
+      - name: Windows source self-test
+        shell: pwsh
+        timeout-minutes: 4
+        working-directory: clients/windows/source
+        run: |
           python windows_gui.py --self-test
           if ($LASTEXITCODE -ne 0) { throw "Windows source self-test failed" }
+      - name: Windows Tk GUI smoke (offline)
+        shell: pwsh
+        timeout-minutes: 6
+        working-directory: clients/windows/source
+        run: |
           python -c "from windows_gui import run_packaged_gui_smoke; run_packaged_gui_smoke()"
           if ($LASTEXITCODE -ne 0) { throw "Windows source GUI smoke failed" }
       - name: Build integrated Windows GUI
         shell: pwsh
         working-directory: clients/windows/source
         run: |
-          python -m PyInstaller --noconfirm --clean --onefile --windowed --name KingoAssistant-Windows --add-data "config.example.yaml;." --add-data "demo;demo" --add-data "../../../kingo-live/har_to_schema.py;." --paths "../../.." --collect-submodules contracts --hidden-import contracts.har_core --hidden-import contracts.seat_diff --collect-submodules pystray windows_gui.py
+          python -m PyInstaller --noconfirm --clean --onefile --windowed --name KingoAssistant-Windows --add-data "config.example.yaml;." --add-data "demo;demo" --add-data "../../../kingo-live/har_to_schema.py;." --paths "../../.." --collect-submodules contracts --collect-submodules ops --collect-submodules qiangke --hidden-import contracts.har_core --hidden-import contracts.seat_diff --collect-submodules pystray windows_gui.py
           if ($LASTEXITCODE -ne 0) { throw "Integrated Windows build failed" }
       - name: Verify packaged executable offline
         shell: pwsh

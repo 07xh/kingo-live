@@ -59,12 +59,6 @@ class _BridgeLog:
         return getattr(self._logger, method)
 
 
-# qk.adapters.base result codes with write semantics
-_WRITE_UNKNOWN_CODES = {"success", "enrolled", "unknown", "auth"}
-_REJECT_CODES = {"full", "conflict", "error"}
-_PRESENT_TRUE = {"success", "enrolled"}
-_PRESENT_FALSE = {"full", "conflict", "error"}
-
 
 def make_receipt(target: Dict[str, Any], *, ok: bool, code: str, msg: str,
                  elapsed_ms: float, write_attempted: Optional[bool],
@@ -78,30 +72,22 @@ def make_receipt(target: Dict[str, Any], *, ok: bool, code: str, msg: str,
 
 def receipt_to_evidence(receipt: dict, *, channel: str = "executor",
                         source: str = "") -> Evidence:
-    """Translate an executor receipt into a verify-phase Evidence.
+    """Convert executor transport receipts into contextual evidence only.
 
-    ``success``/``enrolled`` prove presence; ``full``/``conflict``/``error``
-    prove absence; ``auth``/``unknown`` leave presence ``None`` (the
-    fusion must not treat them as either outcome).
+    A transport acknowledgement never proves that a course was added to
+    the official selected-course list. Keep presence unknown for ALL status
+    codes, even when a caller labels this channel as an official list.
     """
-    code = str(receipt.get("code", "unknown"))
-    if code in _PRESENT_TRUE:
-        present: Optional[bool] = True
-    elif code in _PRESENT_FALSE:
-        present = False
-    else:
-        present = None
     tgt = receipt.get("target") or {}
     return Evidence(channel=channel,
                     course_id=str(tgt.get("course_id", "")),
                     class_id=str(tgt.get("class_id", "")),
-                    present=present,
+                    present=None,
                     latency_ms=float(receipt.get("elapsed_ms") or 0.0),
                     stale=False,
                     source=source or f"executor:{receipt.get('executor', '?')}",
                     semester=str(tgt.get("term", "")),
                     account_scope=str(tgt.get("account", "")))
-
 
 class _LifecycleMixin:
     """Shared no-retry, one-shot call discipline."""
@@ -278,4 +264,5 @@ def demo() -> dict:
     receipt = ex({"course_id": "C1", "class_id": "J1"})
     ev = receipt_to_evidence(receipt)
     return {"receipt": receipt, "evidence": ev.public(),
-            "ok": receipt["ok"] and ev.present is True}
+            "ok": bool(receipt["ok"]) and ev.present is None,
+            "officially_confirmed": False}

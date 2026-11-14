@@ -302,12 +302,14 @@ class AttemptJournal:
             if not getattr(sys, "frozen", False) and str(root) not in sys.path:
                 sys.path.insert(0, str(root))
             try:
-                from qiangke.qk.intent_journal import IntentJournal
-                reserved = IntentJournal(self.shared_intent_db).reserve(
+                from contracts.intent_bridge import reserve_shared_intent
+                reserved = reserve_shared_intent(
                     school=self.school_origin,
                     account=self.verified_account_id,
                     term=self.semester,
-                    course={"kch_id": target.course_id, "xkid": target.class_id},
+                    course_id=target.course_id,
+                    class_id=target.class_id,
+                    path=self.shared_intent_db,
                 )
             except (ImportError, OSError, ValueError, sqlite3.Error):
                 raise EnrollmentNotReady("共享提交记录无法安全写入，禁止提交") from None
