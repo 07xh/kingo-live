@@ -181,6 +181,12 @@ class QkExecutor(_LifecycleMixin):
                 self._adapter.prepare(courses)
             self._ready = True
 
+    def _preflight_target(self, target: Dict[str, Any]) -> None:
+        super()._preflight_target(target)
+        class_id = self._exact_target(target["class_id"], "教学班号")
+        if target.get("xkid") not in (None, "", class_id):
+            raise ValueError("选课目标教学班字段冲突")
+
     def _fire(self, target: Dict[str, Any]) -> dict:
         course_id = self._exact_target(target.get("course_id"), "课程号")
         class_id = self._exact_target(target.get("class_id"), "教学班号")
