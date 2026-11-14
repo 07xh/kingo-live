@@ -30,6 +30,7 @@ class FakeGateway:
     official_write_verified = True
     account_scope = "schedule-account"
     enrollment_semester = "2026-2027-1"
+    official_school_origin = "https://synthetic.invalid"
 
     def __init__(self, windows):
         self.windows = list(windows)
@@ -76,6 +77,7 @@ class ScheduledEnrollmentTest(unittest.TestCase):
         self.engine = EnrollmentEngine(
             self.gateway, self.journal,
             user_opted_in=True, institution_permits_write=True,
+            shared_intent_db=Path(self.temp.name) / "shared-intents.sqlite3",
         )
 
     def make_runner(self, *, gateway=None, poll=(60, 60), wait=2, stop_event=None):
@@ -84,6 +86,7 @@ class ScheduledEnrollmentTest(unittest.TestCase):
             self.engine = EnrollmentEngine(
                 gateway, self.journal,
                 user_opted_in=True, institution_permits_write=True,
+            shared_intent_db=Path(self.temp.name) / "shared-intents.sqlite3",
             )
 
         async def fake_sleep(seconds):
