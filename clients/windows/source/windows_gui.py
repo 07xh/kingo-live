@@ -1373,6 +1373,20 @@ def run_packaged_gui_smoke() -> None:
             try:
                 app.withdraw()  # No visible desktop interference in CI.
                 app.update()
+                # Exercise the bundled EXISTING ops target normalizer, too.
+                # This must not create an executor or contact the university.
+                from core.course_models import CourseTarget
+                from core.scheduled_ui_bridge import PreparedScheduledPlan
+                fake_plan = PreparedScheduledPlan(
+                    "2026-12-21 09:00:00",
+                    (CourseTarget("X", "SYNTHETIC-C", "SYNTHETIC-J",
+                                  semester="SYNTHETIC-TERM"),),
+                    (60, 60), 60)
+                mapped = prepare_ops_targets(fake_plan)
+                if (len(mapped) != 1 or mapped[0]["class_id"] != "SYNTHETIC-J"
+                        or mapped[0]["term"] != "SYNTHETIC-TERM"):
+                    raise AssertionError("Bundled existing ops target adapter failed")
+
                 # The same shared HAR analyzer must work inside a frozen EXE,
                 # not just during source-mode tests. The fixture is synthetic.
                 import json
