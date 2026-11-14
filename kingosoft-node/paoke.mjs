@@ -581,7 +581,10 @@ async function cmdWatch(sess, arg, interval = 3) {
         if (r && (r.code === 'PENDING' || r.code === 'BLOCKED')) return;
       }
     } catch (e) {
-      console.log(`  轮询异常: ${e.message}`);
+      // After an unknown write or a persistence/identity failure, do not
+      // silently loop back into another enrollment preparation cycle.
+      console.log(`  轮询终止: ${e.message}`);
+      return;
     }
     await sleep(interval * 1000);
   }
