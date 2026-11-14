@@ -154,6 +154,7 @@ class LiveHTTPTests(unittest.TestCase):
         c["verify_tls"] = False
         c["budget"]["database"] = str(self.dir / f"budget_{self.tag()}.sqlite")
         c["journal"]["path"] = str(self.dir / f"journal_{self.tag()}.jsonl")
+        c["shared_intent_db"] = str(self.dir / f"shared_{self.tag()}.sqlite3")
         c["targets"] = [{"course_id": "C001", "class_id": "T01"}]
         c["strategy"].update(strategy)
         return c
@@ -196,6 +197,9 @@ class LiveHTTPTests(unittest.TestCase):
         self.state.empty_readback = True
         cfg2 = self.cfg()
         cfg2["journal"]["path"] = str(self.dir / f"journal_{self.tag()}_2.jsonl")
+        # Separate fictional user: a second journal file alone must NOT reset
+        # the shared one-write fence for the same authenticated identity.
+        cfg2["account_scope"] = "fictional-loopback-user-2"
         eng2 = lc.Engine(cfg2, records_path=self.rec("_no"))
         out2 = eng2.enroll(confirm=True)
         self.assertEqual(len(out2), 1)
