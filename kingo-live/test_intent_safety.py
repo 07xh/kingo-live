@@ -2,7 +2,12 @@
 import tempfile
 import unittest
 from pathlib import Path
+import sys
 from unittest.mock import patch
+
+# Direct 'cd kingo-live; python -m unittest' runs need the repository root
+# for the shared SQLite journal code, just like live_client's entry point.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import live_client as lc
 import selftest
