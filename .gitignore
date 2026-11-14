@@ -64,3 +64,11 @@ qiangke/status-*.json
 *.jsonl.key
 *.lock
 *.lease
+
+# kingosoft-node/ 运行时状态：会话凭据与抓取产物，永不入库
+kingosoft-node/session.json
+kingosoft-node/paoke_out/
+kingosoft-node/recon_*.txt
+kingosoft-node/*.html
+kingosoft-node/*.har
+node_modules/

@@ -9,6 +9,7 @@ Technical research repository: a real HTTP client for the Kingo/NCWU course-enro
 | Path | What it is |
 |---|---|
 | `qiangke/` | 独立 Python 实现（零依赖）：青果本地登录 + 8 个选课流程时间窗 + DataTable 选课链路，与 `ncwu/`、`kingo-live/` 并存不互相依赖。见 `qiangke/README.md` |
+| `kingosoft-node/` | 独立 Node 实现（零依赖，Node 18+）：`strEnc` DES + `md5(md5(params)+md5(ts))` token 加密链、七轮次时间窗探测、六步选课/退选链、余量蹲守。与 Python 侧并存不互相依赖。见 `kingosoft-node/README.md`、`kingosoft-node/paoke-manual.md` |
 | `kingo-live/README.md` | Full engineering doc: parameter ranges, placeholder discovery, verification criteria, CLI reference |
 | `kingo-live/live_client.py` | Real `http.client` transport, request budget, submission, official enrollment-list readback, CLI |
 | `kingo-live/optimizations.py` | Clock sync, session prewarm, release-event monitor, failure classifier, failover planner |
@@ -33,13 +34,17 @@ Technical research repository: a real HTTP client for the Kingo/NCWU course-enro
 python -m py_compile kingo-live/*.py bench/*.py ncwu/*.py
 cd kingo-live && python selftest.py && python test_optimizations.py && python cli_smoke.py && python har_to_schema.py --self-test
 cd ../bench && python academic_latency_sim.py --self-test && python academic_latency_sim.py --all
+node --check kingosoft-node/paoke.mjs && node --check kingosoft-node/kingo.mjs && node --check kingosoft-node/jkingo.des.js
+cd kingosoft-node && node paoke.mjs windows   # 需先 node paoke.mjs login <学号> <密码> 或 import <har>
 ```
 
-Zero third-party dependencies, Python 3.10+. See `kingo-live/README.md` for the real-system procedure.
+Zero third-party dependencies, Python 3.10+ / Node 18+. See `kingo-live/README.md` for the real-system procedure.
 
 ## Status
 
 All verification so far runs against loopback HTTP targets and offline simulation. **No request has been sent to a real enrollment system.** The remaining gap is the real schema (`--probe` body or a browser HAR) and a real session. Submission requires an explicit `--confirm` and success is only counted after an official enrollment-list readback.
+
+例外与实测边界：`kingosoft-node/` 已对真实目标做过**只读**访问（七轮次窗口、课程列表、上课班级表），登录加密链与 `saveElectiveCourse` 的三种响应码已用真实请求体对照验证；**提交从未成功**——2026-11-14 实测七个轮次全关（预选 11-13 10:00~23:59 已结束，正选 09-18~09-19，重修选 10-08~10-09，其余未定义），服务端返回"当前时间不是有效的选课时间区段"。因此仓库内不存在任何成功选课记录。
 
 Cookie is injected through the `KINGO_COOKIE` environment variable; it is never written to disk or to this repository.
 
