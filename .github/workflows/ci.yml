@@ -106,7 +106,7 @@ jobs:
         timeout-minutes: 8
         working-directory: clients/windows/source
         run: |
-          python -m unittest discover -s tests -q
+          python -m unittest discover -s tests -v
           if ($LASTEXITCODE -ne 0) { throw "Windows desktop unit tests failed" }
       - name: Windows source self-test
         shell: pwsh
