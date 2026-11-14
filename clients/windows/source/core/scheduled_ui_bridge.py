@@ -95,3 +95,41 @@ async def run_prepared_schedule(
         max_wait_minutes=plan.max_wait_minutes,
     )
     return await runner.run(plan.targets, plan.target_time, stop_event=stop_event)
+
+
+def prepare_ops_targets(plan: PreparedScheduledPlan) -> tuple[dict, ...]:
+    """Map a verified-shape Windows plan through the EXISTING ops adapter.
+
+    Identity mapping is local and read-only. It is NOT an authenticated
+    school identity, a configured Mission.executor, or permission to submit.
+    Preserve preference order, semester and alternative group without
+    making up missing account or official result data.
+    """
+    if not isinstance(plan, PreparedScheduledPlan):
+        raise TypeError("需要先通过 Windows 本地预约计划检查")
+    # Source runs from clients/windows/source; bundled EXE imports the
+    # collected ops package without depending on a checkout directory.
+    from pathlib import Path
+    import sys
+    root = Path(__file__).resolve().parents[4]
+    if not getattr(sys, "frozen", False) and (root / "ops" / "adapter.py").is_file():
+        if str(root) not in sys.path:
+            sys.path.insert(0, str(root))
+    from ops.adapter import normalize_target
+
+    result = []
+    for priority, target in enumerate(plan.targets, 1):
+        row = normalize_target({
+            "course_id": target.course_id,
+            "class_id": target.class_id,
+            "term": target.semester,
+            "priority": priority,
+            "enabled": True,
+            "group": target.group,
+        })
+        if not row.get("class_id") or not row.get("term"):
+            raise ValueError("跨执行器目标缺少教学班或学期身份")
+        result.append(row)
+    if len(result) != len(plan.targets):
+        raise AssertionError("目标转换数量不一致")
+    return tuple(result)
