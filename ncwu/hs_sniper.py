@@ -550,7 +550,12 @@ class Sniper:
 
     # ── 开火 ──
     def fire_one(self, kcdm, skbjdm_hint="", tj="0", jw=None):
-        """发一次提交；返回的是传输回执，不是选课成功证明。"""
+        """Only course-level writes are supported; class hints are NOT encoded."""
+        if str(skbjdm_hint or "").strip():
+            # The current ActionForm items includes kcdm but NOT skbjdm.
+            # Silently ignoring an exact requested class could enroll a
+            # different teaching group, so fail before any physical write.
+            return False, "现有接口不能精确指定教学班，未发送请求", 0.0
         items = f"{kcdm},null,{tj},true|"
         t0 = time.perf_counter()
         k = Kingo(jw) if jw is not None else self.k
@@ -587,6 +592,9 @@ class Sniper:
         return len(self.pool)
 
     def fire(self, kcdm, skbjdm="", conc=None, tj=None):
+        if str(skbjdm or "").strip():
+            log("保护", "教学班号没有进入预选提交载荷，禁止按指定班提交", "31")
+            return None
         # This standalone engine cannot infer success from HTTP 200 or a count.
         # A current, official open-window indication and durable intent are
         # required before the sole physical submission.
