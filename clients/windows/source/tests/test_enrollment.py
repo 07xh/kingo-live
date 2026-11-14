@@ -101,6 +101,35 @@ class AutomaticEnrollmentTest(unittest.TestCase):
     def run_engine(self, engine, targets=None):
         return asyncio.run(engine.run(targets or [self.a]))
 
+    def test_existing_ncwu_intent_blocks_windows_before_callback(self):
+        import sys
+        sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
+        from qiangke.qk.intent_journal import IntentJournal
+        common_path = self.path.parent / "shared-intents.sqlite3"
+        self.assertTrue(IntentJournal(common_path).reserve(
+            school="https://synthetic.invalid",
+            account="synthetic-account-A", term="2026-2027-1",
+            course={"kch_id": "COURSE-1", "xkid": "CLASS-1"}))
+        fake = FakeOfficialGateway([Offering("COURSE-1", "CLASS-1", 2)])
+        report = self.run_engine(self.engine(fake))
+        self.assertTrue(report.halted)
+        self.assertEqual(fake.writes, [])
+        self.assertIn("跨执行器", report.states["A"])
+
+    def test_windows_intent_blocks_ncwu_with_same_student_course_scope(self):
+        import sys
+        sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
+        from qiangke.qk.intent_journal import IntentJournal
+        fake = FakeOfficialGateway([Offering("COURSE-1", "CLASS-1", 2)])
+        report = self.run_engine(self.engine(fake))
+        self.assertFalse(report.halted)
+        self.assertEqual(len(fake.writes), 1)
+        self.assertFalse(IntentJournal(
+            self.path.parent / "shared-intents.sqlite3").reserve(
+                school="https://synthetic.invalid", account="synthetic-account-A",
+                term="2026-2027/1",
+                course={"kch_id": "COURSE-1", "xkid": "CLASS-2"}))
+
     def test_all_independent_capability_gates_required(self):
         fake = FakeOfficialGateway([Offering("COURSE-1", "CLASS-1", 1)])
         capabilities = [
