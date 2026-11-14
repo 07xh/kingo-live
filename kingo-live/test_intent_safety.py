@@ -59,6 +59,41 @@ class ScopeTests(unittest.TestCase):
 
 
 class IntentHTTPTests(selftest.LiveHTTPTests):
+    def test_ncwu_reservation_blocks_live_executor_even_with_fresh_jsonl(self):
+        from qiangke.qk.intent_journal import IntentJournal
+        cfg = self.cfg()
+        shared = IntentJournal(cfg["shared_intent_db"])
+        self.assertTrue(shared.reserve(
+            school=cfg["base_url"], account=cfg["account_scope"],
+            term=cfg["xnxq"],
+            course={"kch_id": "C001", "xkid": "T01"}))
+        engine = lc.Engine(cfg, self.rec("_shared_preexisting"))
+        try:
+            outcome = engine.enroll(confirm=True)
+            self.assertEqual(self.state.submit_count, 0)
+            self.assertEqual(
+                outcome[0].reason,
+                "shared_intent_pending_needs_official_reconciliation")
+            self.assertFalse(engine.journal.pending_fingerprints())
+        finally:
+            engine.close()
+
+    def test_live_reservation_blocks_ncwu_after_transport_failure(self):
+        from qiangke.qk.intent_journal import IntentJournal
+        cfg = self.cfg()
+        self.state.empty_readback = True
+        engine = lc.Engine(cfg, self.rec("_shared_live"))
+        try:
+            outcome = engine.enroll(confirm=True)
+            self.assertEqual(self.state.submit_count, 1)
+            self.assertFalse(outcome[0].success)
+            shared = IntentJournal(cfg["shared_intent_db"])
+            self.assertFalse(shared.reserve(
+                school=cfg["base_url"], account=cfg["account_scope"],
+                term=cfg["xnxq"],
+                course={"kch_id": "C001", "xkid": "T02"}))
+        finally:
+            engine.close()
     def test_confirmed_missing_course_cannot_trigger_fallback(self):
         for class_id in ('T01', ''):
             with self.subTest(class_id=class_id):
