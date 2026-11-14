@@ -17,7 +17,11 @@ Zero third-party dependencies. Python 3.10+.
 """
 from __future__ import annotations
 
+import os
+import sys
 import time
+from pathlib import Path
+from urllib.parse import urlsplit
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
@@ -99,14 +103,25 @@ class Mission:
     sessions: int = 1
     respect_retry_after: bool = True
     executor: Optional[Callable[[Dict[str, Any]], Any]] = None
+    # Explicit verified scope for the shared, persistent intent fence.
+    # A human-readable account nickname alone is not authoritative.
+    verified_school_origin: str = ""
+    verified_account_id: str = ""
+    enrollment_semester: str = ""
+    shared_intent_db: Optional[str] = None
     catalog_path: str = "/hsjw//wap/mycourseschedule.action"
     ticket_names: Tuple[str, ...] = ("token", "csrf", "_csrf")
 
     def public(self) -> dict:
         d = {k: v for k, v in self.__dict__.items()
-             if k not in ("executor", "targets")}
+             if k not in ("executor", "targets", "verified_account_id",
+                          "shared_intent_db")}
+        d["verified_account_id"] = "<configured>" if self.verified_account_id else "<missing>"
+        d["shared_intent_db"] = "<configured>" if self.shared_intent_db else "<default>"
         d["targets"] = [
-            {k: ("<redacted>" if k in ("cookie", "token", "password")
+            {k: ("<redacted>" if any(h in k.lower() for h in
+                ("cookie", "token", "password", "secret", "authorization",
+                 "credential", "session", "key"))
                  else v) for k, v in t.items()}
             for t in self.targets]
         d["executor"] = "attached" if self.executor else "monitor-only"
@@ -141,6 +156,9 @@ def build_plan(recon_report: Optional[dict] = None,
                mission: Optional[Mission] = None) -> Plan:
     """Pure function: evidence in, concrete plan out. No I/O."""
     plan = Plan(sessions=max(1, mission.sessions) if mission else 1,
+                poll_base_ms=(mission.poll_interval_base_ms if mission else 60000.0),
+                poll_hot_ms=(mission.poll_interval_hot_ms if mission else 2000.0),
+                hot_rounds=(mission.hot_rounds if mission else 10),
                 respect_retry_after=(mission.respect_retry_after
                                      if mission else True))
     er = endpoints_report or {}
@@ -205,11 +223,22 @@ class Orchestrator:
         self.pool = TicketPool(ttl_s=self.plan.ticket_ttl_s)
         self.bodies = BodyPrebuilder()
         self.shard = ConnectionShard([mission.host], sessions=self.plan.sessions)
+        self._apply_plan_runtime()
         self.clock = HighResClock()
         self.verdicts: List[dict] = []
         self.observations: List[dict] = []
         self.orders: List[dict] = []
         self._executed: set = set()
+
+    def _apply_plan_runtime(self) -> None:
+        """Apply the selected Plan without resetting live monitor/intent state."""
+        poller = self.driver.poller
+        poller.base = float(self.plan.poll_base_ms)
+        poller.hot = float(self.plan.poll_hot_ms)
+        poller.hot_rounds = max(1, int(self.plan.hot_rounds))
+        self.pool.ttl_s = float(self.plan.ticket_ttl_s)
+        self.shard = ConnectionShard([self.mission.host],
+                                     sessions=max(1, int(self.plan.sessions)))
 
     # -- phase: recon ---------------------------------------------------
     def recon_probe(self, fetch: Callable[[Endpoint], SimpleResponse],
@@ -233,6 +262,7 @@ class Orchestrator:
         self.phase.require("recon", "plan", "watch")
         self.plan = build_plan(recon_report, endpoints_report, p5_report,
                                self.mission)
+        self._apply_plan_runtime()
         if self.phase.current in ("recon", "plan"):
             self.phase.advance("plan built")
         return self.plan
@@ -303,16 +333,49 @@ class Orchestrator:
             if self.plan.prebuild else None
         order = {"target": target, "body_prebuilt": body is not None,
                  "channel": self.plan.channel}
-        # The callback may have sent a physical request before it raises.
-        # Fence this order BEFORE invoking the external executor, not after.
+        # A process-only gate cannot survive restart or protect other
+        # executables. Fence locally before attempting the shared reservation.
         self._executed.add(key)
         try:
-            result = self.mission.executor(target)
-            order["result"] = str(result)
-        except Exception as exc:  # executor faults must not loop re-fires
-            self.driver.gate.mark_pending(target, f"executor_error:{exc}")
+            origin = self.mission.verified_school_origin
+            account = self.mission.verified_account_id
+            term = self.mission.enrollment_semester
+            parsed = urlsplit(origin)
+            if (parsed.scheme not in ("https", "http") or not parsed.netloc
+                    or not account.strip() or not term.strip()):
+                raise ValueError("school, account or term identity not verified")
+            repo_root = str(Path(__file__).resolve().parents[1])
+            if repo_root not in sys.path:
+                sys.path.insert(0, repo_root)
+            from contracts.intent_bridge import reserve_shared_intent
+            database = (os.environ.get("KINGO_INTENT_DB")
+                        if "KINGO_INTENT_DB" in os.environ
+                        else self.mission.shared_intent_db)
+            reserved = reserve_shared_intent(
+                school=origin, account=account, term=term,
+                course_id=str(target["course_id"]),
+                class_id=str(target["class_id"]), path=database)
+        except Exception as exc:
             order["acted"] = False
-            order["error"] = f"{type(exc).__name__}: {exc}"
+            order["reason"] = f"shared_intent_unavailable:{type(exc).__name__}"
+            self.driver.gate.mark_pending(target, order["reason"])
+            self.orders.append(order)
+            return order
+        if not reserved:
+            order["acted"] = False
+            order["reason"] = "shared_intent_pending_needs_official_reconciliation"
+            self.driver.gate.mark_pending(target, order["reason"])
+            self.orders.append(order)
+            return order
+        # SQLite reservation is durable before any possible socket write.
+        try:
+            result = self.mission.executor(target)
+            order["callback_returned"] = True
+            order["result_type"] = type(result).__name__
+        except Exception as exc:  # executor faults must not loop re-fires
+            self.driver.gate.mark_pending(target, f"executor_error:{type(exc).__name__}")
+            order["acted"] = False
+            order["error"] = type(exc).__name__
             self.orders.append(order)
             return order
         order["acted"] = True
@@ -343,7 +406,10 @@ class Orchestrator:
                 "mission": self.mission.public(),
                 "driver": self.driver.report(),
                 "observations": self.observations[-20:],
-                "orders": self.orders, "verdicts": self.verdicts}
+                "orders": [{k: v for k, v in o.items()
+                            if k not in ("target", "result")}
+                           for o in self.orders],
+                "verdicts": self.verdicts}
 
 
 def demo() -> dict:
