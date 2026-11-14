@@ -90,12 +90,22 @@ class _LifecycleMixin:
         t0 = time.perf_counter()
         try:
             self._ensure_ready()
-            receipt = self._fire(target)
-        except Exception as exc:   # no auto-retry: let the intent layer decide
+        except Exception as exc:
+            # A preflight error happens before _fire could send any write.
             return make_receipt(target, ok=False, code="error",
                                 msg=f"{type(exc).__name__}: {exc}",
                                 elapsed_ms=(time.perf_counter() - t0) * 1000,
                                 write_attempted=False, executor=self.name)
+        try:
+            receipt = self._fire(target)
+        except Exception as exc:
+            # Exceptions from a transport callback do NOT prove no bytes were
+            # sent: a server may have committed before the connection failed.
+            # Never let a caller mistake this for 'definitely unsent'.
+            return make_receipt(target, ok=False, code="unknown",
+                                msg=f"{type(exc).__name__}: {exc}",
+                                elapsed_ms=(time.perf_counter() - t0) * 1000,
+                                write_attempted=None, executor=self.name)
         receipt.setdefault("elapsed_ms", round((time.perf_counter() - t0) * 1000, 2))
         return receipt
 

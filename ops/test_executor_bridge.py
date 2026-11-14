@@ -112,16 +112,24 @@ class TestQkExecutor(unittest.TestCase):
         self.assertIs(receipt["write_attempted"], False)
         self.assertEqual(len(ad.calls), 0)
 
-    def test_exec_fault_surfaces_as_no_write_error(self):
+    def test_exec_fault_after_transport_is_unknown_delivery(self):
         class Boom(FakeQkAdapter):
             def grab(self, course):
                 raise RuntimeError("socket dead")
 
         ex = eb.QkExecutor(Boom())
         receipt = ex({"course_id": "C", "class_id": "J"})
-        self.assertEqual(receipt["code"], "error")
+        self.assertEqual(receipt["code"], "unknown")
         self.assertIn("RuntimeError", receipt["msg"])
+        self.assertIsNone(receipt["write_attempted"])
+
+    def test_lifecycle_login_failure_is_proven_unsent(self):
+        ad = FakeQkAdapter()
+        ad.login = lambda: False
+        receipt = eb.QkExecutor(ad)({"course_id": "C1", "class_id": "J1"})
+        self.assertEqual(receipt["code"], "error")
         self.assertIs(receipt["write_attempted"], False)
+        self.assertEqual(ad.calls, [])
 
     def test_lazy_import_via_injected_factory(self):
         made = []
