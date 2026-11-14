@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import sys
+import tempfile
 import threading
 import time
 import unittest
@@ -188,9 +189,18 @@ class TestPlan(unittest.TestCase):
 
 
 class TestOrchestrator(unittest.TestCase):
+    def setUp(self):
+        shared = tempfile.TemporaryDirectory()
+        self.addCleanup(shared.cleanup)
+        self.shared_path = str(Path(shared.name) / "shared.sqlite3")
+
     def _mission(self, executor=None):
         return orch.Mission(host="loopback", targets=[
             {"course_id": "C1", "class_id": "01", "priority": 1}],
+            verified_school_origin="https://synthetic.invalid",
+            verified_account_id="fictional-phase3-account",
+            enrollment_semester="2026-2027-1",
+            shared_intent_db=self.shared_path,
             executor=executor)
 
     def test_full_pipeline_monitor_only(self):
@@ -315,6 +325,43 @@ class TestOrchestrator(unittest.TestCase):
         self.assertIn("teaching-class", refused["reason"])
         self.assertEqual(calls.count, 0)
 
+    def test_scope_missing_never_calls_executor(self):
+        callback = Collector()
+        mission = self._mission(executor=callback)
+        mission.verified_account_id = ""
+        o = orch.Orchestrator(mission)
+        o.phase = orch.Phase("watch")
+        o.watch(orch.SimpleResponse(200, {}, "", 1.0),
+                lambda _: [Offering("C1", "01", 60, 0)])
+        choice = o.watch(orch.SimpleResponse(200, {}, "", 1.0),
+                         lambda _: [Offering("C1", "01", 60, 2)])
+        out = o.act(choice)
+        self.assertFalse(out["acted"])
+        self.assertIn("shared_intent_unavailable", out["reason"])
+        self.assertEqual(callback.count, 0)
+
+    def test_old_ncwu_intent_blocks_ops_callback(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        from qiangke.qk.intent_journal import IntentJournal
+        callback = Collector()
+        mission = self._mission(executor=callback)
+        self.assertTrue(IntentJournal(self.shared_path).reserve(
+            school=mission.verified_school_origin,
+            account=mission.verified_account_id,
+            term=mission.enrollment_semester,
+            course={"kch_id": "C1", "xkid": "02"}))
+        o = orch.Orchestrator(mission)
+        o.phase = orch.Phase("watch")
+        o.watch(orch.SimpleResponse(200, {}, "", 1.0),
+                lambda _: [Offering("C1", "01", 60, 0)])
+        choice = o.watch(orch.SimpleResponse(200, {}, "", 1.0),
+                         lambda _: [Offering("C1", "01", 60, 2)])
+        out = o.act(choice)
+        self.assertFalse(out["acted"])
+        self.assertEqual(
+            out["reason"], "shared_intent_pending_needs_official_reconciliation")
+        self.assertEqual(callback.count, 0)
+
     def test_recon_probe_readonly_matrix(self):
         seen: List[str] = []
 
@@ -436,8 +483,14 @@ class TestLoopbackEndToEnd(unittest.TestCase):
 
     def test_end_to_end_monitor_only(self):
         c = Collector()
+        shared = tempfile.TemporaryDirectory()
+        self.addCleanup(shared.cleanup)
         m = orch.Mission(host=f"127.0.0.1:{self.port}", targets=[
             {"course_id": "C1", "class_id": "01", "priority": 1}],
+            verified_school_origin="https://synthetic.invalid",
+            verified_account_id="fictional-phase3-loopback",
+            enrollment_semester="2026-2027-1",
+            shared_intent_db=str(Path(shared.name) / "shared.sqlite3"),
             executor=c, poll_interval_base_ms=60000.0)
 
         def parse(body: str):
