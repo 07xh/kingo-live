@@ -1,9 +1,17 @@
 name: ci
 
 on:
+  # Main receives post-merge verification. Feature branches are checked by
+  # pull_request, not a second identical run for the same branch push.
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
+
+# Superseded commits should not consume private-repository runner minutes.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 env:
   # Windows runners default to cp1252; catalog bodies contain Chinese text.
