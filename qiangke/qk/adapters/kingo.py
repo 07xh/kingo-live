@@ -676,6 +676,8 @@ class KingoAdapter(Adapter):
                     self.log.info("未配 grab_request，用内置默认模板（该 action 已探测存在）；"
                                   "若返回参数错误，跑 import-curl 覆盖")
             try:
+                if not self._exact_class_id(course):
+                    raise ValueError("缺少精确教学班号")
                 url, form, json_body, headers = self._render_tpl(
                     self.grab_request or DEFAULT_GRAB, course)
             except ValueError:
@@ -747,8 +749,8 @@ class KingoAdapter(Adapter):
 
     def _render_tpl(self, tpl: dict, course: dict):
         class_id = self._exact_class_id(course)
-        if not class_id:
-            raise ValueError("缺少明确教学班号")
+        # Read-only catalog templates legitimately pass an empty course.
+        # The grab() write path requires class_id before calling here.
         pool = dict(course)
         pool.setdefault("user", self.acct.get("user", ""))
         pool.setdefault("name", course.get("name", ""))
