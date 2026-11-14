@@ -121,6 +121,22 @@ class TestAdapter(unittest.TestCase):
                                     "targets": [{"kcid": "C1"}]})
         self.assertEqual(kw2["poll_interval_base_ms"], 1000.0)
 
+    def test_legacy_mission_preserves_verified_scope_not_unknowns(self):
+        mission = adapter.mission_from_legacy({
+            "host": "synthetic.invalid",
+            "official_school_origin": "https://synthetic.invalid",
+            "account_scope": "fictional-student",
+            "enrollment_semester": "2026-2027-1",
+            "shared_intent_db": "synthetic-intents.sqlite3",
+            "targets": [{"kcid": "C1", "skbj": "01"}]})
+        self.assertEqual(mission.account_scope, "fictional-student")
+        self.assertEqual(mission.targets[0]["class_id"], "01")
+        with self.assertRaises(ValueError):
+            adapter.mission_from_legacy({
+                "host": "synthetic.invalid",
+                "unmapped_option": True,
+                "targets": [{"kcid": "C1", "skbj": "01"}]})
+
     def test_export_roundtrip(self):
         rows = adapter.export_targets([{"course_id": "C1", "class_id": "01",
                                         "priority": 1}])
