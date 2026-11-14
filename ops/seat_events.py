@@ -21,6 +21,8 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field, asdict
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from typing import Any, Dict, Iterable, List, Optional
 
 
@@ -330,6 +332,28 @@ class IntentGate:
         return {"states": dict(self.states), "history": list(self.history)}
 
 
+def parse_retry_after_ms(headers: Dict[str, str]) -> float:
+    """Convert HTTP Retry-After to milliseconds without shortening cooldowns.
+
+    Accepts RFC delta-seconds and HTTP-date; malformed values fall back to
+    the monitor's normal server-limit cooldown. Header matching is case
+    insensitive. The caller decides when a response requires a cooldown.
+    """
+    raw = next((str(v).strip() for k, v in (headers or {}).items()
+                if str(k).lower() == "retry-after"), "")
+    if not raw:
+        return 0.0
+    if raw.isascii() and raw.isdecimal():
+        return float(int(raw) * 1000)
+    try:
+        stamp = parsedate_to_datetime(raw)
+        if stamp.tzinfo is None:
+            return 0.0
+        return max(0.0, (stamp - datetime.now(timezone.utc)).total_seconds() * 1000)
+    except (TypeError, ValueError, OverflowError):
+        return 0.0
+
+
 # ---------------------------------------------------------------------------
 # driver
 # ---------------------------------------------------------------------------
@@ -357,11 +381,16 @@ class EventDriver:
             d = Decision("rate_limited", "backoff", "http=429",
                          self.poller.next_interval())
         elif status in (500, 502, 503, 504):
-            self.poller.on_overload()
+            if status == 503 and retry_after_ms > 0:
+                self.poller.on_rate_limited(retry_after_ms)
+            else:
+                self.poller.on_overload()
             d = Decision("overload", "backoff", f"http={status}",
                          self.poller.next_interval())
         elif status != 200:
-            d = Decision("invalid_snapshot", "stop", f"http={status}")
+            # A redirect or failed request cannot erase a catalog snapshot.
+            d = Decision("read_unavailable", "stop", f"http={status}",
+                         self.poller.next_interval())
         else:
             events = self.monitor.observe(offers, poll_cost_ms)
             if ReleaseMonitor.trigger(events):

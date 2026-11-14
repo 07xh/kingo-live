@@ -166,7 +166,7 @@ class HardeningTests(unittest.TestCase):
         self.assertEqual(gate.reconcile(target, False), "pending")
         self.assertFalse(gate.allow(target))
         driver = seat_events.EventDriver([target])
-        self.assertEqual(driver.poll([], status=302).kind, "invalid_snapshot")
+        self.assertEqual(driver.poll([], status=302).kind, "read_unavailable")
         self.assertEqual(driver.poll([], status=429, retry_after_ms=120000).interval_ms,
                          120000.0)
         ranker = seat_events.TargetRanker()
