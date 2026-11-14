@@ -72,3 +72,7 @@ kingosoft-node/recon_*.txt
 kingosoft-node/*.html
 kingosoft-node/*.har
 node_modules/
+
+# HAR dump 产物（含会话标识）
+dump/
+authserver-node/*.log

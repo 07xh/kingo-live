@@ -35,6 +35,8 @@ python -m py_compile kingo-live/*.py bench/*.py ncwu/*.py
 cd kingo-live && python selftest.py && python test_optimizations.py && python cli_smoke.py && python har_to_schema.py --self-test
 cd ../bench && python academic_latency_sim.py --self-test && python academic_latency_sim.py --all
 node --check kingosoft-node/paoke.mjs && node --check kingosoft-node/kingo.mjs && node --check kingosoft-node/jkingo.des.js
+node --check authserver-node/auth.mjs
+node tools/har-dump.mjs capture.har ./dump --host jwmis --headers
 cd kingosoft-node && node paoke.mjs windows   # 需先 node paoke.mjs login <学号> <密码> 或 import <har>
 ```
 
@@ -128,6 +130,10 @@ document above are untouched.
 | `ops/fingerprint_bridge.py` | CDP real-browser channel (stdlib-only WebSocket client) plus a mitmproxy addon (#14) |
 | `ops/test_ops.py`, `ops/test_fingerprint.py` | Loopback regressions: 65/65 and 113/113 |
 | `tools/push_ops.py` | Portable REST incremental sync for `ops/`; see `tools/README.md` |
+| `tools/har-dump.mjs` | HAR -> per-response body dump for offline field comparison (zero-dep, header redaction); see `tools/README.md` |
+| `authserver-node/auth.mjs` | Node probe for the Wisedu/CAS unified-auth host: `probe / cas / ratelimit / enum / login`, read-only, no brute force |
+| `authserver-node/README.md` | WebFlow `execution` chain, `serviceValidate` + ServiceManagement registry, auth-host topology, open questions |
+| `authserver-node/edu-src-template.md` | Vulnerability report template for the CAS `service` matching surface (evidence chain + impact + reproduction) |
 
 Invariants: read-only by default (any non-GET method requires an explicit
 `allow_write=True`), credentials only from the environment, `HTTP 200 !=

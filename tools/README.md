@@ -40,3 +40,16 @@ Guarantees:
   SHA1 is asserted, and the commit parent is checked against the previous HEAD.
 
 `ops/` content itself is documented in [`ops/README.md`](../ops/README.md).
+
+## har-dump.mjs
+
+把一次浏览器 HAR 里的目标站响应体原样剥离到本地，用于离线比对 `tableId`、
+`ActionForm` 字段与菜单树，避免反复登录。零依赖，Node 18+。
+
+```bash
+node tools/har-dump.mjs capture.har ./dump --host jwmis --headers
+```
+
+- 只读 HAR、只写本地文件；不重放请求、不替换 Cookie。
+- `--headers` 打印首个命中请求的请求头，`Cookie`/`Token`/`ticket` 自动打码。
+- 落盘目录可能含会话标识，`dump/`、`*.har` 已在根 `.gitignore` 排除。
