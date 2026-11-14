@@ -1,0 +1,33 @@
+name: node-contract-offline
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  node-contract:
+    name: Node source syntax and transport contract (offline only)
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Check existing Node source without executing login or network commands
+        shell: bash
+        run: |
+          node --check kingosoft-node/paoke.mjs
+          node --check kingosoft-node/kingo.mjs
+          node --check kingosoft-node/jkingo.des.js
+          node --check authserver-node/auth.mjs
+          node --check tools/har-dump.mjs
+          node --check contracts/node_receipt_contract.mjs
+      - name: Run synthetic identity and transport evidence tests
+        shell: bash
+        run: node --test contracts/tests/test_node_receipt_contract.mjs
