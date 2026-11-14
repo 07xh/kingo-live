@@ -362,6 +362,19 @@ class TestOrchestrator(unittest.TestCase):
             out["reason"], "shared_intent_pending_needs_official_reconciliation")
         self.assertEqual(callback.count, 0)
 
+    def test_two_orchestrators_cannot_repeat_course_after_restart(self):
+        callback = Collector()
+        for expected in (True, False):
+            o = orch.Orchestrator(self._mission(executor=callback))
+            o.phase = orch.Phase("watch")
+            o.watch(orch.SimpleResponse(200, {}, "", 1.0),
+                    lambda _: [Offering("C1", "01", 60, 0)])
+            choice = o.watch(orch.SimpleResponse(200, {}, "", 1.0),
+                             lambda _: [Offering("C1", "01", 60, 2)])
+            out = o.act(choice)
+            self.assertEqual(out["acted"], expected)
+        self.assertEqual(callback.count, 1)
+
     def test_recon_probe_readonly_matrix(self):
         seen: List[str] = []
 
