@@ -194,20 +194,32 @@ class TestRepositoryImports(unittest.TestCase):
 
 
 class TestEvidenceMapping(unittest.TestCase):
-    def test_code_to_presence(self):
-        cases = {"success": True, "enrolled": True,
-                 "full": False, "conflict": False, "error": False,
-                 "auth": None, "unknown": None}
-        for code, expected in cases.items():
+    def test_all_executor_codes_leave_official_presence_unknown(self):
+        # A transport status is never an official per-class readback.
+        for code in ("success", "enrolled", "full", "conflict",
+                     "error", "auth", "unknown"):
             with self.subTest(code=code):
                 r = eb.make_receipt({"course_id": "C", "class_id": "J"},
                                     ok=True, code=code, msg="",
                                     elapsed_ms=1.0, write_attempted=True,
                                     executor="t")
                 ev = eb.receipt_to_evidence(r)
-                self.assertEqual(ev.present, expected)
+                self.assertIsNone(ev.present)
                 self.assertEqual(ev.course_id, "C")
                 self.assertEqual(ev.class_id, "J")
+
+    def test_executor_receipt_cannot_impersonate_official_readback(self):
+        from crosscheck import fuse
+        target = {"course_id": "C", "class_id": "J",
+                  "semester": "synthetic-term",
+                  "account_scope": "synthetic-account"}
+        receipt = eb.make_receipt(
+            {**target, "term": "synthetic-term", "account": "synthetic-account"},
+            ok=True, code="enrolled", msg="", elapsed_ms=2.0,
+            write_attempted=True, executor="qk:kingo")
+        evidence = eb.receipt_to_evidence(receipt, channel="official_list")
+        self.assertIsNone(evidence.present)
+        self.assertNotEqual(fuse(target, [evidence]).verdict, "confirmed")
 
     def test_evidence_stays_context_only(self):
         """Executor receipts are transport evidence, never enrollment proof.
