@@ -1,5 +1,6 @@
 """Synthetic local-history inventory. Never contact a school or write to user files."""
 import base64
+from contextlib import closing
 import json
 from pathlib import Path
 import sqlite3
@@ -85,7 +86,7 @@ class HistoryAuditTests(unittest.TestCase):
         p = self.root / "fence.sqlite3"
         self.assertEqual(shared_sqlite_summary(p).condition, "missing")
         self.assertFalse(p.exists())
-        with sqlite3.connect(p) as db:
+        with closing(sqlite3.connect(p)) as db, db:
             db.execute("CREATE TABLE metadata(key TEXT PRIMARY KEY, value TEXT NOT NULL)")
             db.execute("CREATE TABLE attempts(fingerprint TEXT PRIMARY KEY, state TEXT NOT NULL, at TEXT)")
             db.execute("INSERT INTO metadata VALUES ('salt', ?)", ("e" * 64,))
