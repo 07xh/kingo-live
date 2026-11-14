@@ -104,7 +104,7 @@ class ReadonlyRecoveryTests(unittest.TestCase):
         self.assertEqual(result.states["A"], RecoveryStatus.UNAVAILABLE)
         self.assertEqual(self.journal.status(self.target), "pending")
 
-    def test_v1_legacy_attempt_can_be_confirmed_without_write(self):
+    def test_v1_legacy_account_unbound_stays_pending_even_if_current_account_selected(self):
         fingerprint = self.journal._legacy_fingerprint(self.target)
         self.path.write_text(
             json.dumps({"version": 1, "attempts": [fingerprint]}),
@@ -112,12 +112,18 @@ class ReadonlyRecoveryTests(unittest.TestCase):
         )
         gateway = self.make_gateway(enrolled={("COURSE-1", "CLASS-1")})
         result = self.reconcile(gateway)
-        self.assertEqual(result.states["A"], RecoveryStatus.CONFIRMED)
-        self.assertEqual(self.journal.status(self.target), "confirmed")
+        self.assertTrue(result.official_read_ok)
+        self.assertTrue(result.needs_attention)
+        self.assertEqual(result.states["A"], RecoveryStatus.LEGACY_SCOPE_UNVERIFIED)
+        self.assertEqual(self.journal.status(self.target), "legacy_pending")
         self.assertEqual(gateway.writes, [])
         migrated = json.loads(self.path.read_text(encoding="utf-8"))
         self.assertEqual(migrated["version"], 2)
-        self.assertNotIn(fingerprint, migrated["legacy_attempts"])
+        self.assertIn(fingerprint, migrated["legacy_attempts"])
+        # A second current account with the same course cannot claim this
+        # unscoped historical fingerprint by reusing the same file.
+        other = AttemptJournal(self.path, TERM, account_scope="other-account")
+        self.assertEqual(other.status(self.target), "legacy_pending")
 
     def test_rejected_attempt_can_only_become_confirmed_with_official_record(self):
         self.journal.reserve_before_write(self.target)
