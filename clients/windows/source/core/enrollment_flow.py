@@ -6,6 +6,8 @@ It reuses the original account-scoped HMAC journal and official window gates.
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
+import sys
 from typing import Sequence
 
 from core.course_models import ScheduleSnapshot, offering_matches
@@ -210,10 +212,37 @@ async def run_enrollment(engine, targets: Sequence[Target]) -> RunReport:
                 fsm.move(EngineState.PROTECTED, "window_closed_before_write")
                 return report(True)
 
+            # Reserve a single, crash-safe write slot shared with NCWU,
+            # Qiangke and kingo-live. The legacy Windows JSON journal stays
+            # intact; ambiguity in either store fails closed before sending.
+            try:
+                try:
+                    from contracts.intent_bridge import reserve_shared_intent
+                except ModuleNotFoundError:
+                    repo_root = str(Path(__file__).resolve().parents[4])
+                    if repo_root not in sys.path:
+                        sys.path.insert(0, repo_root)
+                    from contracts.intent_bridge import reserve_shared_intent
+                reserved = reserve_shared_intent(
+                    school=engine.gateway.official_school_origin,
+                    account=engine.gateway.account_scope,
+                    term=engine.journal.semester,
+                    course_id=target.course_id, class_id=target.class_id,
+                    path=engine.shared_intent_db)
+            except Exception:
+                states[target.key] = "跨执行器共享提交记录无法安全写入"
+                fsm.move(EngineState.PROTECTED, "shared_journal_unavailable")
+                return report(True)
+            if not reserved:
+                states[target.key] = "该课程存在跨执行器待核验意图，禁止重复发送"
+                fsm.move(EngineState.PROTECTED, "shared_intent_pending")
+                return report(True)
             try:
                 engine.journal.reserve_before_write(target)
             except Exception:
-                states[target.key] = "本机提交记录无法安全写入"
+                # The shared reservation is intentionally not deleted:
+                # uncertain persistence must never authorize a repeat write.
+                states[target.key] = "本机提交记录无法安全写入，保留共享锁"
                 fsm.move(EngineState.PROTECTED, "journal_reservation_failed")
                 return report(True)
 
