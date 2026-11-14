@@ -81,6 +81,8 @@ class VerifiedGateway(Protocol):
     async def read_enrollments(self) -> set[tuple[str, str]]: ...
     async def list_offerings(self) -> Sequence[Offering]: ...
     async def read_schedule(self): ...
+    # Authoritative school origin, distinct from the account display label.
+    official_school_origin: str
     async def submit_once(self, target: Target) -> SubmitReceipt: ...
 
 
@@ -403,7 +405,9 @@ class EnrollmentEngine:
     def __init__(self, gateway: VerifiedGateway, journal: AttemptJournal,
                  *, user_opted_in: bool = False,
                  institution_permits_write: bool = False,
-                 verification_policy: VerificationPolicy | None = None):
+                 verification_policy: VerificationPolicy | None = None,
+                 shared_intent_db: Path | None = None):
+        self.shared_intent_db = shared_intent_db
         self.gateway = gateway
         self.journal = journal
         self.user_opted_in = user_opted_in
@@ -421,6 +425,9 @@ class EnrollmentEngine:
         if (not isinstance(scope, str) or not scope.strip()
                 or scope != self.journal.account_scope):
             raise EnrollmentNotReady("当前官方账户与本地提交记录隔离范围不一致")
+        origin = getattr(self.gateway, "official_school_origin", None)
+        if not isinstance(origin, str) or not origin.startswith(("https://", "http://")):
+            raise EnrollmentNotReady("缺少已核实的学校域名，禁止跨执行器共享提交")
         if not (self.user_opted_in is True and self.institution_permits_write is True
                 and all(getattr(self.gateway, name, False) is True for name in capabilities)):
             raise EnrollmentNotReady("用户授权、学校许可及目录/窗口/已选/写入接口验收必须全部通过")
