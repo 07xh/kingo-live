@@ -423,12 +423,12 @@ class Orchestrator:
         for target, decision in zip(pending, decisions):
             row = decision.as_dict()
             # Never include the verified student identifier in public reports.
-            row["target"] = dict(target)
+            row["target"] = self._public_order({"target": target})["target"]
             out.append(row)
         for o in self.orders:
             if o.get("acted"):
                 v = fuse(verified_scope(o["target"]), evidence)
-                out.append({"target": o["target"], "verdict": v.verdict,
+                out.append({"target": self._public_order(o)["target"], "verdict": v.verdict,
                             "action": v.action, "channels": v.channels,
                             "reason": v.reason})
         self.verdicts = out
