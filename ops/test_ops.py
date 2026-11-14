@@ -252,6 +252,30 @@ def main() -> int:
         d4 = drv.poll([], status=401)
         c.check("driver auth halt", d4.kind == "auth", d4.kind)
 
+        # A non-200 read must not discard the previous official snapshot.
+        # Otherwise the next unchanged positive row is a fake 'new' event.
+        protected = seat_events.EventDriver(targets)
+        positive = [O("C1", "01", 60, 3)]
+        first = protected.poll(positive)
+        c.check("first observation with known seats", first.kind == "submit")
+        redirected = protected.poll([], status=302)
+        c.check("redirect blocks catalog use",
+                redirected.kind == "read_unavailable", redirected.kind)
+        c.check("redirect preserves last snapshot",
+                protected.monitor.snapshot["C1|01"].remain == 3)
+        returned = protected.poll(positive)
+        c.check("unchanged catalog does not create phantom new event",
+                returned.kind == "quiet", returned.kind)
+        missing = protected.poll([], status=404)
+        c.check("404 does not reset baseline",
+                missing.kind == "read_unavailable"
+                and protected.monitor.snapshot["C1|01"].remain == 3)
+        cached = protected.poll([], status=304)
+        c.check("304 does not masquerade as a fresh catalog",
+                cached.kind == "read_unavailable"
+                and protected.monitor.snapshot["C1|01"].remain == 3)
+
+
         # --- p5_probe -----------------------------------------------------
         c.check("spearman perfect negative",
                 abs(p5_probe.spearman([1, 2, 3, 4], [4, 3, 2, 1]) + 1.0) < 1e-9,
