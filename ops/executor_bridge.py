@@ -264,4 +264,5 @@ def demo() -> dict:
     receipt = ex({"course_id": "C1", "class_id": "J1"})
     ev = receipt_to_evidence(receipt)
     return {"receipt": receipt, "evidence": ev.public(),
-            "ok": receipt["ok"] and ev.present is True}
+            "ok": bool(receipt["ok"]) and ev.present is None,
+            "officially_confirmed": False}
