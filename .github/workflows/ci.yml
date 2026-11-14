@@ -71,6 +71,7 @@ jobs:
           python test_fingerprint.py
           python test_phase2.py
           python test_phase3.py
+          python test_executor_bridge.py -v
           python test_hardening.py -v
       - name: Ops canonical snapshots diagnostics (offline)
         shell: bash
