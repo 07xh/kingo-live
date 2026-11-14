@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 __all__ = ["ALIASES", "normalize_target", "load_targets", "load_mission",
-           "export_targets"]
+           "mission_from_legacy", "export_targets"]
 
 ALIASES: Dict[str, str] = {
     # canonical course/class identity from HAR + qiangke/ncwu configs
@@ -171,6 +171,14 @@ def load_mission(source: Any, **overrides) -> Dict[str, Any]:
             kw["sessions"] = max(1, int(v))
         elif lk == "catalog_path":
             kw["catalog_path"] = str(v)
+        elif lk in ("verified_school_origin", "official_school_origin"):
+            kw["verified_school_origin"] = str(v)
+        elif lk == "verified_account_id":
+            kw["verified_account_id"] = str(v)
+        elif lk in ("enrollment_semester", "official_term"):
+            kw["enrollment_semester"] = str(v)
+        elif lk == "shared_intent_db":
+            kw["shared_intent_db"] = None if v is None else str(v)
         elif lk in ("targets", "courses", "course_list", "目标课程"):
             pass                     # consumed by load_targets below
         else:
@@ -179,6 +187,23 @@ def load_mission(source: Any, **overrides) -> Dict[str, Any]:
     kw.update(overrides)
     kw["unknown_keys"] = unknown
     return kw
+
+
+def mission_from_legacy(source: Any, **overrides):
+    """Construct a Mission without passing metadata to the dataclass.
+
+    Unknown wrapper fields must be reviewed rather than silently discarded.
+    School, account and term are NEVER inferred from aliases or display text.
+    """
+    kw = load_mission(source, **overrides)
+    unknown = kw.pop("unknown_keys", [])
+    if unknown:
+        raise ValueError(f"unrecognized mission keys: {sorted(unknown)}")
+    try:
+        from .orchestrator import Mission
+    except ImportError:   # pragma: no cover - direct-run research CLI
+        from orchestrator import Mission
+    return Mission(**kw)
 
 
 def export_targets(targets: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
