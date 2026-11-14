@@ -1,5 +1,6 @@
 """Offline Windows-to-legacy shared intent fence; no university HTTP calls."""
 import asyncio
+import json
 from pathlib import Path
 import sys
 import tempfile
@@ -121,6 +122,45 @@ class WindowsSharedFenceTests(unittest.TestCase):
         self.assertEqual(journal.status(self.target), "confirmed")
         self.assertEqual(gateway.writes, [])
         self.assertEqual(gateway.window_calls, 0)
+
+    def test_new_journal_binds_verified_identity_without_plaintext(self):
+        journal = self.journal()
+        journal.reserve_before_write(self.target)
+        data = json.loads((self.dir / "windows.json").read_text(encoding="utf-8"))
+        self.assertEqual(len(data["scope_binding"]), 64)
+        raw = (self.dir / "windows.json").read_text(encoding="utf-8")
+        self.assertNotIn(ACCOUNT, raw)
+        self.assertNotIn("synthetic-account-A", raw)
+        self.assertNotIn(SCHOOL, raw)
+        # A restart with the SAME identity sees the old pending record.
+        self.assertEqual(self.journal().status(self.target), "pending")
+        # A different verified student or school cannot claim that file,
+        # even if a display account alias is accidentally reused.
+        for school, account in (
+            (SCHOOL, "fictional-different-student"),
+            ("https://different.invalid", ACCOUNT),
+        ):
+            foreign = AttemptJournal(
+                self.dir / "windows.json", TERM,
+                account_scope="synthetic-account-A",
+                shared_intent_db=self.db,
+                school_origin=school,
+                verified_account_id=account)
+            with self.assertRaises(EnrollmentNotReady):
+                foreign.status(self.target)
+
+    def test_nonempty_unbound_v2_history_cannot_be_reassigned(self):
+        journal = self.journal()
+        journal._read()
+        data = json.loads((self.dir / "windows.json").read_text(encoding="utf-8"))
+        data["attempts"]["a" * 64] = "pending"
+        (self.dir / "windows.json").write_text(
+            json.dumps(data), encoding="utf-8")
+        before = (self.dir / "windows.json").read_bytes()
+        with self.assertRaises(EnrollmentNotReady):
+            journal.reserve_before_write(self.target)
+        self.assertEqual((self.dir / "windows.json").read_bytes(), before)
+        self.assertFalse(self.db.exists())
 
     def test_shared_database_unavailable_leaves_local_unmodified(self):
         self.db.mkdir()
