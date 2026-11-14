@@ -880,6 +880,30 @@ class Engine:
             tb = time.perf_counter()
             body = self._submit_body(target, offering)
             build_ms = (time.perf_counter() - tb) * 1000.0
+
+        # One shared SQLite reservation across cooperating Kingo/NCWU
+        # entrypoints. Keep our existing JSONL journal as separate evidence.
+        # The journal is never cleared because a response was ambiguous.
+        try:
+            repo_root = str(Path(__file__).resolve().parents[1])
+            if repo_root not in sys.path:
+                sys.path.insert(0, repo_root)
+            from contracts.intent_bridge import reserve_shared_intent
+            shared_db = self.cfg.get("shared_intent_db")
+            shared_ok = reserve_shared_intent(
+                school=self.cfg["base_url"],
+                account=self.cfg["account_scope"],
+                term=self.cfg["xnxq"],
+                course_id=offering.course_id,
+                class_id=offering.class_id,
+                path=shared_db)
+        except Exception as exc:
+            a.reason = f"shared_intent_unavailable:{type(exc).__name__}"
+            return [a], opt.Decision("protected", "halt", a.reason)
+        if not shared_ok:
+            a.reason = "shared_intent_pending_needs_official_reconciliation"
+            return [a], opt.Decision("pending", "halt", a.reason)
+
         def one() -> Attempt:
             t0 = time.perf_counter()
             local_tr = self.transports[0]
