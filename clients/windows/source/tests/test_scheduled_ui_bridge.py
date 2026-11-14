@@ -3,12 +3,13 @@ from __future__ import annotations
 
 import asyncio
 from copy import deepcopy
+from dataclasses import replace
 from datetime import datetime
 import unittest
 
 from core.enrollment import EnrollmentNotReady
 from core.official_portal_schedule import CHINA_TIMEZONE
-from core.scheduled_ui_bridge import prepare_scheduled_plan, run_prepared_schedule
+from core.scheduled_ui_bridge import prepare_scheduled_plan, prepare_ops_targets, run_prepared_schedule
 
 
 class ScheduledUiBridgeTests(unittest.TestCase):
@@ -34,6 +35,27 @@ class ScheduledUiBridgeTests(unittest.TestCase):
         self.assertEqual([x.class_id for x in plan.targets], ["K1", "K2"])
         self.assertEqual(plan.poll_interval_range, (60, 120))
         self.assertEqual(plan.max_wait_minutes, 60)
+
+    def test_windows_plan_maps_to_existing_ops_contract_offline(self):
+        plan = prepare_scheduled_plan(self.config, now_epoch=self.now)
+        rows = prepare_ops_targets(plan)
+        self.assertEqual(len(rows), 2)
+        self.assertEqual([r["course_id"] for r in rows],
+                         ["SYNTHETIC-101", "SYNTHETIC-102"])
+        self.assertEqual([r["class_id"] for r in rows], ["K1", "K2"])
+        self.assertEqual([r["priority"] for r in rows], [1, 2])
+        self.assertEqual([r["term"] for r in rows], ["2026-2027-2"] * 2)
+        self.assertEqual([r["group"] for r in rows], ["A", "A"])
+        self.assertTrue(all(r["enabled"] for r in rows))
+        self.assertTrue(all("account" not in r and "executor" not in r
+                            for r in rows))
+
+    def test_ops_mapping_does_not_infer_missing_official_term(self):
+        plan = prepare_scheduled_plan(self.config, now_epoch=self.now)
+        invalid = replace(plan, targets=(
+            replace(plan.targets[0], semester=""),))
+        with self.assertRaises(ValueError):
+            prepare_ops_targets(invalid)
 
     def test_placeholder_and_missing_teaching_class_fail_closed(self):
         for field, value in (("course_id", "FILL_FROM_OFFICIAL_PAGE"),
