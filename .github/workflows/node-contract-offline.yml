@@ -11,14 +11,21 @@ permissions:
 
 jobs:
   node-contract:
-    name: Node source syntax and transport contract (offline only)
-    runs-on: ubuntu-latest
-    timeout-minutes: 8
+    name: Node + original SQLite contract (${{ matrix.os }}, offline only)
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
       - name: Check existing Node source without executing login or network commands
         shell: bash
         run: |
@@ -29,6 +36,9 @@ jobs:
           node --check tools/har-dump.mjs
           node --check contracts/node_receipt_contract.mjs
           node --check contracts/cross_client_identity.mjs
+          node --check contracts/node_shared_intent.mjs
       - name: Run synthetic identity, readback and transport evidence tests
         shell: bash
-        run: node --test contracts/tests/test_node_receipt_contract.mjs contracts/tests/test_cross_client_identity.mjs
+        run: node --test contracts/tests/test_node_receipt_contract.mjs contracts/tests/test_cross_client_identity.mjs contracts/tests/test_node_shared_intent.mjs
+      - name: Verify original Python SQLite journal contract
+        run: python -m unittest contracts.tests.test_intent_bridge
