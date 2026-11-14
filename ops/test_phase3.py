@@ -121,6 +121,22 @@ class TestAdapter(unittest.TestCase):
                                     "targets": [{"kcid": "C1"}]})
         self.assertEqual(kw2["poll_interval_base_ms"], 1000.0)
 
+    def test_legacy_mission_preserves_verified_scope_not_unknowns(self):
+        mission = adapter.mission_from_legacy({
+            "host": "synthetic.invalid",
+            "verified_school_origin": "https://synthetic.invalid",
+            "verified_account_id": "fictional-student",
+            "enrollment_semester": "2026-2027-1",
+            "shared_intent_db": "synthetic-intents.sqlite3",
+            "targets": [{"kcid": "C1", "skbj": "01"}]})
+        self.assertEqual(mission.verified_account_id, "fictional-student")
+        self.assertEqual(mission.targets[0]["class_id"], "01")
+        with self.assertRaises(ValueError):
+            adapter.mission_from_legacy({
+                "host": "synthetic.invalid",
+                "account_scope": "unverified-user-alias",
+                "targets": [{"kcid": "C1", "skbj": "01"}]})
+
     def test_export_roundtrip(self):
         rows = adapter.export_targets([{"course_id": "C1", "class_id": "01",
                                         "priority": 1}])
@@ -418,6 +434,36 @@ class TestOrchestrator(unittest.TestCase):
             out = o.act(choice)
             self.assertEqual(out["acted"], expected)
         self.assertEqual(callback.count, 1)
+
+    def test_plan_is_applied_to_live_driver_without_erasing_gate(self):
+        mission = self._mission()
+        mission.poll_interval_base_ms = 45000.0
+        o = orch.Orchestrator(mission)
+        self.assertEqual(o.driver.poller.base, 45000.0)
+        o.phase = orch.Phase("watch")
+        gate, monitor = o.driver.gate, o.driver.monitor
+        o.plan_with(p5_report={"rule": "fcfs",
+                              "strategy": {"poll_interval_ms": 3500.0,
+                                           "sessions": 2}})
+        self.assertEqual(o.plan.poll_base_ms, 3500.0)
+        self.assertEqual(o.driver.poller.base, 3500.0)
+        self.assertEqual(o.shard.sessions, 2)
+        self.assertIs(gate, o.driver.gate)
+        self.assertIs(monitor, o.driver.monitor)
+
+    def test_executor_exceptions_and_target_secrets_not_in_report(self):
+        def bad(_target):
+            raise RuntimeError("access_token=SENSITIVE_MARKER")
+        mission = self._mission(executor=bad)
+        mission.targets[0]["access_token"] = "SENSITIVE_MARKER"
+        o = orch.Orchestrator(mission)
+        o.phase = orch.Phase("watch")
+        from seat_events import Decision
+        result = o.act(Decision("submit", "fire", target=mission.targets[0]))
+        self.assertFalse(result["acted"])
+        self.assertEqual(result["error"], "RuntimeError")
+        self.assertNotIn("SENSITIVE_MARKER", str(o.report()))
+        self.assertNotIn("SENSITIVE_MARKER", str(result))
 
     def test_recon_probe_readonly_matrix(self):
         seen: List[str] = []
