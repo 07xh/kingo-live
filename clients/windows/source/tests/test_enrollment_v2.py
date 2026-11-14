@@ -232,6 +232,32 @@ class ControlledEnrollmentTests(unittest.TestCase):
         self.assertTrue(report.halted)
         self.assertEqual(fake.writes, [])
 
+    def test_v1_legacy_selected_course_stays_account_unbound(self):
+        fingerprint = self.journal._legacy_fingerprint(self.target)
+        self.path.write_text(json.dumps(
+            {"version": 1, "attempts": [fingerprint]}), encoding="utf-8")
+        fake = FakeOfficialGateway([self.offer],
+                                   enrolled={("C1", "K1")})
+        report = self.execute(self.engine(fake), [self.target])
+        self.assertTrue(report.halted)
+        self.assertIn("无账号归属", report.states["A"])
+        self.assertEqual(report.delivery["A"], "not_sent")
+        self.assertEqual(self.journal.status(self.target), "legacy_pending")
+        self.assertEqual(fake.writes, [])
+
+    def test_transport_callback_timeout_is_unknown_even_if_official_confirms(self):
+        class CommitThenDisconnect(FakeOfficialGateway):
+            async def submit_once(self, target):
+                self.writes.append(target)
+                self.enrolled.add((target.course_id, target.class_id))
+                raise TimeoutError("synthetic disconnect")
+        gateway = CommitThenDisconnect([self.offer])
+        result = self.execute(self.engine(gateway), [self.target])
+        self.assertFalse(result.halted)
+        self.assertEqual(result.delivery["A"], "unknown")
+        self.assertEqual(self.journal.status(self.target), "confirmed")
+        self.assertEqual(len(gateway.writes), 1)
+
     def test_unlisted_previous_pending_attempt_blocks_new_writes(self):
         old = CourseTarget("OLD", "OLD_C", "OLD_K")
         self.journal.reserve_before_write(old)
