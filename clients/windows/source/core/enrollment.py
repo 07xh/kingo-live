@@ -224,7 +224,27 @@ class AttemptJournal:
         # Validation accepts older V2 files without this optional list.
         # Normalize in memory so status/reserve/recovery cannot KeyError.
         value["legacy_attempts"] = legacy
+        binding = value.get("scope_binding")
+        if binding is not None and (
+                not isinstance(binding, str) or len(binding) != 64
+                or any(c not in "0123456789abcdef" for c in binding)):
+            raise ValueError("本机历史记录身份绑定损坏，拒绝执行")
+        if self.shared_intent_db is not None and binding is not None:
+            if not hmac.compare_digest(binding, self._scope_digest(value)):
+                raise EnrollmentNotReady("历史记录所属学校、官方账号或学期与本次不一致")
         return value
+
+    def _scope_digest(self, data: dict) -> str:
+        """Persistent identity binding without saving an account identifier."""
+        from urllib.parse import urlsplit
+        school = (urlsplit(self.school_origin).netloc or
+                  self.school_origin).strip().lower()
+        payload = json.dumps(
+            [school, self.verified_account_id, self.semester,
+             self.account_scope], ensure_ascii=False,
+            separators=(",", ":")).encode("utf-8")
+        salt = base64.urlsafe_b64decode(data["salt"].encode("ascii"))
+        return hmac.new(salt, payload, hashlib.sha256).hexdigest()
 
     def _fingerprint(self, target: Target, data: dict) -> str:
         salt = base64.urlsafe_b64decode(data["salt"].encode("ascii"))
@@ -267,6 +287,14 @@ class AttemptJournal:
         if len(data["attempts"]) + len(data["legacy_attempts"]) >= MAX_JOURNAL_ATTEMPTS:
             raise EnrollmentNotReady("本地提交记录达到上限，须人工核对")
         if self.shared_intent_db is not None:
+            # Never claim a pre-existing unbound V2/V1 journal belongs to a
+            # newly asserted official identity. Keep those old records for
+            # manual reconciliation instead of silently reassigning them.
+            if "scope_binding" not in data:
+                if data["attempts"] or data["legacy_attempts"]:
+                    raise EnrollmentNotReady(
+                        "历史记录没有官方账号绑定，须先核验，不得重新认领")
+                data["scope_binding"] = self._scope_digest(data)
             # Reuse the original shared SQLite implementation; no fifth
             # engine and no migration of the existing Windows HMAC journal.
             # If packaging cannot supply it, FAIL CLOSED before any POST.
