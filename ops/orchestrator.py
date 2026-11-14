@@ -17,9 +17,11 @@ Zero third-party dependencies. Python 3.10+.
 """
 from __future__ import annotations
 
+import os
+import sys
 import time
 from pathlib import Path
-import sys
+from urllib.parse import urlsplit
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
@@ -101,10 +103,10 @@ class Mission:
     sessions: int = 1
     respect_retry_after: bool = True
     executor: Optional[Callable[[Dict[str, Any]], Any]] = None
-    # These fields are required for a physical executor callback. A host
-    # label or a manually typed display name is NOT an authenticated identity.
-    official_school_origin: str = ""
-    account_scope: str = ""
+    # Explicit verified scope for the shared, persistent intent fence.
+    # A human-readable account nickname alone is not authoritative.
+    verified_school_origin: str = ""
+    verified_account_id: str = ""
     enrollment_semester: str = ""
     shared_intent_db: Optional[str] = None
     catalog_path: str = "/hsjw//wap/mycourseschedule.action"
@@ -112,8 +114,9 @@ class Mission:
 
     def public(self) -> dict:
         d = {k: v for k, v in self.__dict__.items()
-             if k not in ("executor", "targets", "account_scope", "shared_intent_db")}
-        d["account_scope"] = "<configured>" if self.account_scope else "<missing>"
+             if k not in ("executor", "targets", "verified_account_id",
+                          "shared_intent_db")}
+        d["verified_account_id"] = "<configured>" if self.verified_account_id else "<missing>"
         d["shared_intent_db"] = "<configured>" if self.shared_intent_db else "<default>"
         d["targets"] = [
             {k: ("<redacted>" if any(h in k.lower() for h in
@@ -153,10 +156,8 @@ def build_plan(recon_report: Optional[dict] = None,
                mission: Optional[Mission] = None) -> Plan:
     """Pure function: evidence in, concrete plan out. No I/O."""
     plan = Plan(sessions=max(1, mission.sessions) if mission else 1,
-                poll_base_ms=(mission.poll_interval_base_ms
-                              if mission else 60000.0),
-                poll_hot_ms=(mission.poll_interval_hot_ms
-                             if mission else 2000.0),
+                poll_base_ms=(mission.poll_interval_base_ms if mission else 60000.0),
+                poll_hot_ms=(mission.poll_interval_hot_ms if mission else 2000.0),
                 hot_rounds=(mission.hot_rounds if mission else 10),
                 respect_retry_after=(mission.respect_retry_after
                                      if mission else True))
@@ -230,7 +231,7 @@ class Orchestrator:
         self._executed: set = set()
 
     def _apply_plan_runtime(self) -> None:
-        """Apply selected parameters without discarding event/intent state."""
+        """Apply the selected Plan without resetting live monitor/intent state."""
         poller = self.driver.poller
         poller.base = float(self.plan.poll_base_ms)
         poller.hot = float(self.plan.poll_hot_ms)
@@ -332,20 +333,28 @@ class Orchestrator:
             if self.plan.prebuild else None
         order = {"target": target, "body_prebuilt": body is not None,
                  "channel": self.plan.channel}
-        # A process-local gate cannot fence another executable or a restart.
-        # The common SQLite/HMAC intent must be reserved before callback I/O.
+        # A process-only gate cannot survive restart or protect other
+        # executables. Fence locally before attempting the shared reservation.
+        self._executed.add(key)
         try:
+            origin = self.mission.verified_school_origin
+            account = self.mission.verified_account_id
+            term = self.mission.enrollment_semester
+            parsed = urlsplit(origin)
+            if (parsed.scheme not in ("https", "http") or not parsed.netloc
+                    or not account.strip() or not term.strip()):
+                raise ValueError("school, account or term identity not verified")
             repo_root = str(Path(__file__).resolve().parents[1])
             if repo_root not in sys.path:
                 sys.path.insert(0, repo_root)
             from contracts.intent_bridge import reserve_shared_intent
+            database = (os.environ.get("KINGO_INTENT_DB")
+                        if "KINGO_INTENT_DB" in os.environ
+                        else self.mission.shared_intent_db)
             reserved = reserve_shared_intent(
-                school=self.mission.official_school_origin,
-                account=self.mission.account_scope,
-                term=self.mission.enrollment_semester,
+                school=origin, account=account, term=term,
                 course_id=str(target["course_id"]),
-                class_id=str(target["class_id"]),
-                path=self.mission.shared_intent_db)
+                class_id=str(target["class_id"]), path=database)
         except Exception as exc:
             order["acted"] = False
             order["reason"] = f"shared_intent_unavailable:{type(exc).__name__}"
@@ -358,9 +367,7 @@ class Orchestrator:
             self.driver.gate.mark_pending(target, order["reason"])
             self.orders.append(order)
             return order
-        # The callback may have sent a physical request before it raises.
-        # Fence this order BEFORE invoking the external executor, not after.
-        self._executed.add(key)
+        # SQLite reservation is durable before any possible socket write.
         try:
             result = self.mission.executor(target)
             order["callback_returned"] = True
