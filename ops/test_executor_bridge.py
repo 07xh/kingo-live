@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import sys
+import tempfile
 import threading
 import unittest
 import urllib.request
@@ -112,16 +113,24 @@ class TestQkExecutor(unittest.TestCase):
         self.assertIs(receipt["write_attempted"], False)
         self.assertEqual(len(ad.calls), 0)
 
-    def test_exec_fault_surfaces_as_no_write_error(self):
+    def test_exec_fault_after_transport_is_unknown_delivery(self):
         class Boom(FakeQkAdapter):
             def grab(self, course):
                 raise RuntimeError("socket dead")
 
         ex = eb.QkExecutor(Boom())
         receipt = ex({"course_id": "C", "class_id": "J"})
-        self.assertEqual(receipt["code"], "error")
+        self.assertEqual(receipt["code"], "unknown")
         self.assertIn("RuntimeError", receipt["msg"])
+        self.assertIsNone(receipt["write_attempted"])
+
+    def test_ready_failure_is_proven_unsent(self):
+        adapter = FakeQkAdapter()
+        adapter.login = lambda: False
+        receipt = eb.QkExecutor(adapter)({"course_id": "C1", "class_id": "J1"})
+        self.assertEqual(receipt["code"], "error")
         self.assertIs(receipt["write_attempted"], False)
+        self.assertEqual(adapter.calls, [])
 
     def test_lazy_import_via_injected_factory(self):
         made = []
@@ -243,9 +252,15 @@ class TestOrchestratorEndToEnd(unittest.TestCase):
 
             ad = FakeQkAdapter()
             executor = eb.QkExecutor(ad, kind="kingo")
+            shared = tempfile.TemporaryDirectory()
+            self.addCleanup(shared.cleanup)
             mission = orch.Mission(
                 targets=[{"course_id": "C9", "class_id": "J9",
                           "priority": 1}],
+                verified_school_origin="https://synthetic.invalid",
+                verified_account_id="fictional-bridge-loopback",
+                enrollment_semester="2026-2027-1",
+                shared_intent_db=str(Path(shared.name) / "shared.sqlite3"),
                 executor=executor)
             o = orch.Orchestrator(mission)
             o.plan_with()          # recon -> plan
