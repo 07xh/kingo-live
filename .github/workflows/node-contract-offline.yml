@@ -28,6 +28,7 @@ jobs:
           node --check authserver-node/auth.mjs
           node --check tools/har-dump.mjs
           node --check contracts/node_receipt_contract.mjs
-      - name: Run synthetic identity and transport evidence tests
+          node --check contracts/cross_client_identity.mjs
+      - name: Run synthetic identity, readback and transport evidence tests
         shell: bash
-        run: node --test contracts/tests/test_node_receipt_contract.mjs
+        run: node --test contracts/tests/test_node_receipt_contract.mjs contracts/tests/test_cross_client_identity.mjs
