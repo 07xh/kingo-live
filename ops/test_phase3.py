@@ -124,17 +124,17 @@ class TestAdapter(unittest.TestCase):
     def test_legacy_mission_preserves_verified_scope_not_unknowns(self):
         mission = adapter.mission_from_legacy({
             "host": "synthetic.invalid",
-            "official_school_origin": "https://synthetic.invalid",
-            "account_scope": "fictional-student",
+            "verified_school_origin": "https://synthetic.invalid",
+            "verified_account_id": "fictional-student",
             "enrollment_semester": "2026-2027-1",
             "shared_intent_db": "synthetic-intents.sqlite3",
             "targets": [{"kcid": "C1", "skbj": "01"}]})
-        self.assertEqual(mission.account_scope, "fictional-student")
+        self.assertEqual(mission.verified_account_id, "fictional-student")
         self.assertEqual(mission.targets[0]["class_id"], "01")
         with self.assertRaises(ValueError):
             adapter.mission_from_legacy({
                 "host": "synthetic.invalid",
-                "unmapped_option": True,
+                "account_scope": "unverified-user-alias",
                 "targets": [{"kcid": "C1", "skbj": "01"}]})
 
     def test_export_roundtrip(self):
@@ -213,8 +213,8 @@ class TestOrchestrator(unittest.TestCase):
     def _mission(self, executor=None):
         return orch.Mission(host="loopback", targets=[
             {"course_id": "C1", "class_id": "01", "priority": 1}],
-            official_school_origin="https://synthetic.invalid",
-            account_scope="fictional-phase3-student",
+            verified_school_origin="https://synthetic.invalid",
+            verified_account_id="fictional-phase3-account",
             enrollment_semester="2026-2027-1",
             shared_intent_db=self.shared_path,
             executor=executor)
@@ -328,46 +328,68 @@ class TestOrchestrator(unittest.TestCase):
                 lambda _: [Offering("C1", "01", 60, 0)])
         decision = o.watch(orch.SimpleResponse(200, {}, "", 5.0),
                            lambda _: [Offering("C1", "01", 60, 2)])
-        self.assertEqual(decision.kind, "submit")
+        # Strict target matching rejects ambiguity before submission.
+        self.assertEqual(decision.kind, "no_match")
         result = o.act(decision)
         self.assertFalse(result["acted"])
-        self.assertIn("teaching-class", result["reason"])
+        self.assertIn("decision=no_match", result["reason"])
+        # Defense-in-depth: a forged fire decision also cannot write.
+        from seat_events import Decision
+        forged = Decision("submit", "fire", target=mission.targets[0])
+        refused = o.act(forged)
+        self.assertFalse(refused["acted"])
+        self.assertIn("teaching-class", refused["reason"])
         self.assertEqual(calls.count, 0)
 
-    def test_missing_school_account_scope_blocks_executor(self):
-        c = Collector()
-        m = self._mission(executor=c)
-        m.account_scope = ""
-        o = orch.Orchestrator(m)
+    def test_scope_missing_never_calls_executor(self):
+        callback = Collector()
+        mission = self._mission(executor=callback)
+        mission.verified_account_id = ""
+        o = orch.Orchestrator(mission)
         o.phase = orch.Phase("watch")
         o.watch(orch.SimpleResponse(200, {}, "", 1.0),
                 lambda _: [Offering("C1", "01", 60, 0)])
-        decision = o.watch(orch.SimpleResponse(200, {}, "", 1.0),
-                           lambda _: [Offering("C1", "01", 60, 2)])
-        result = o.act(decision)
-        self.assertFalse(result["acted"])
-        self.assertIn("shared_intent_unavailable", result["reason"])
-        self.assertEqual(c.count, 0)
+        choice = o.watch(orch.SimpleResponse(200, {}, "", 1.0),
+                         lambda _: [Offering("C1", "01", 60, 2)])
+        out = o.act(choice)
+        self.assertFalse(out["acted"])
+        self.assertIn("shared_intent_unavailable", out["reason"])
+        self.assertEqual(callback.count, 0)
 
-    def test_qiangke_reservation_blocks_ops_executor(self):
+    def test_old_ncwu_intent_blocks_ops_callback(self):
         sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
         from qiangke.qk.intent_journal import IntentJournal
-        m = self._mission(executor=Collector())
+        callback = Collector()
+        mission = self._mission(executor=callback)
         self.assertTrue(IntentJournal(self.shared_path).reserve(
-            school=m.official_school_origin, account=m.account_scope,
-            term=m.enrollment_semester,
-            course={"kch_id": "C1", "xkid": "01"}))
-        o = orch.Orchestrator(m)
+            school=mission.verified_school_origin,
+            account=mission.verified_account_id,
+            term=mission.enrollment_semester,
+            course={"kch_id": "C1", "xkid": "02"}))
+        o = orch.Orchestrator(mission)
         o.phase = orch.Phase("watch")
         o.watch(orch.SimpleResponse(200, {}, "", 1.0),
                 lambda _: [Offering("C1", "01", 60, 0)])
-        decision = o.watch(orch.SimpleResponse(200, {}, "", 1.0),
-                           lambda _: [Offering("C1", "01", 60, 2)])
-        result = o.act(decision)
-        self.assertFalse(result["acted"])
+        choice = o.watch(orch.SimpleResponse(200, {}, "", 1.0),
+                         lambda _: [Offering("C1", "01", 60, 2)])
+        out = o.act(choice)
+        self.assertFalse(out["acted"])
         self.assertEqual(
-            result["reason"], "shared_intent_pending_needs_official_reconciliation")
-        self.assertEqual(m.executor.count, 0)
+            out["reason"], "shared_intent_pending_needs_official_reconciliation")
+        self.assertEqual(callback.count, 0)
+
+    def test_two_orchestrators_cannot_repeat_course_after_restart(self):
+        callback = Collector()
+        for expected in (True, False):
+            o = orch.Orchestrator(self._mission(executor=callback))
+            o.phase = orch.Phase("watch")
+            o.watch(orch.SimpleResponse(200, {}, "", 1.0),
+                    lambda _: [Offering("C1", "01", 60, 0)])
+            choice = o.watch(orch.SimpleResponse(200, {}, "", 1.0),
+                             lambda _: [Offering("C1", "01", 60, 2)])
+            out = o.act(choice)
+            self.assertEqual(out["acted"], expected)
+        self.assertEqual(callback.count, 1)
 
     def test_plan_is_applied_to_live_driver_without_erasing_gate(self):
         mission = self._mission()
@@ -375,8 +397,7 @@ class TestOrchestrator(unittest.TestCase):
         o = orch.Orchestrator(mission)
         self.assertEqual(o.driver.poller.base, 45000.0)
         o.phase = orch.Phase("watch")
-        gate = o.driver.gate
-        monitor = o.driver.monitor
+        gate, monitor = o.driver.gate, o.driver.monitor
         o.plan_with(p5_report={"rule": "fcfs",
                               "strategy": {"poll_interval_ms": 3500.0,
                                            "sessions": 2}})
@@ -394,8 +415,7 @@ class TestOrchestrator(unittest.TestCase):
         o = orch.Orchestrator(mission)
         o.phase = orch.Phase("watch")
         from seat_events import Decision
-        result = o.act(Decision("submit", "fire",
-                                target=mission.targets[0]))
+        result = o.act(Decision("submit", "fire", target=mission.targets[0]))
         self.assertFalse(result["acted"])
         self.assertEqual(result["error"], "RuntimeError")
         self.assertNotIn("SENSITIVE_MARKER", str(o.report()))
@@ -526,8 +546,8 @@ class TestLoopbackEndToEnd(unittest.TestCase):
         self.addCleanup(shared.cleanup)
         m = orch.Mission(host=f"127.0.0.1:{self.port}", targets=[
             {"course_id": "C1", "class_id": "01", "priority": 1}],
-            official_school_origin="https://synthetic.invalid",
-            account_scope="fictional-phase3-loopback",
+            verified_school_origin="https://synthetic.invalid",
+            verified_account_id="fictional-phase3-loopback",
             enrollment_semester="2026-2027-1",
             shared_intent_db=str(Path(shared.name) / "shared.sqlite3"),
             executor=c, poll_interval_base_ms=60000.0)
