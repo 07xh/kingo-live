@@ -20,6 +20,7 @@ class FakeOfficialGateway:
     official_write_verified = True
     account_scope = "synthetic-account-A"
     enrollment_semester = "2026-2027-1"
+    official_school_origin = "https://synthetic.invalid"
 
     def __init__(self, offerings, *, result="confirm", enrolled=None,
                  window_states=None, responses=None, offering_snapshots=None):
@@ -93,6 +94,7 @@ class AutomaticEnrollmentTest(unittest.TestCase):
         return EnrollmentEngine(fake, journal or self.journal,
                                 user_opted_in=opt_in,
                                 institution_permits_write=permission,
+                                shared_intent_db=self.path.parent / "shared-intents.sqlite3",
                                 verification_policy=VerificationPolicy(
                                     max_reads=3, interval_seconds=0))
 
