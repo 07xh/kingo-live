@@ -169,6 +169,30 @@ class TestSniperExecutor(unittest.TestCase):
         self.assertEqual(ex._sniper.fires, [])
 
 
+class TestRepositoryImports(unittest.TestCase):
+    """Exercise non-injected imports; fake constructors prevent any I/O."""
+
+    def test_real_qk_module_path_with_fake_factory(self):
+        from unittest.mock import patch
+        eb._enable_repository_imports()
+        from qiangke.qk import adapters
+        with patch.object(adapters, "make", return_value=FakeQkAdapter()) as make:
+            receipt = eb.QkExecutor()({"course_id": "C", "class_id": "J"})
+        self.assertEqual(receipt["code"], "success")
+        self.assertTrue(make.called)
+        self.assertTrue(hasattr(make.call_args.args[3], "ok"))
+
+    def test_real_ncwu_module_path_with_fake_sniper(self):
+        from unittest.mock import patch
+        eb._enable_repository_imports()
+        from ncwu import hs_sniper
+        with patch.object(hs_sniper, "Sniper", FakeSniperModule.Sniper):
+            receipt = eb.SniperExecutor(cfg={"cookie": "FAKE"})(
+                {"course_id": "C", "class_id": "J"})
+        self.assertEqual(receipt["code"], "unknown")
+        self.assertIs(receipt["write_attempted"], True)
+
+
 class TestEvidenceMapping(unittest.TestCase):
     def test_code_to_presence(self):
         cases = {"success": True, "enrolled": True,

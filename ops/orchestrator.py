@@ -372,11 +372,32 @@ class Orchestrator:
         of failure. Terminates the pipeline.
         """
         self.phase.require("act", "verify")
+        def verified_scope(target: dict) -> dict:
+            # Account and semester authority comes from Mission, not
+            # executor-facing target aliases or an HTTP receipt.
+            scoped = dict(target)
+            term = str(self.mission.enrollment_semester or "").strip()
+            account = str(self.mission.verified_account_id or "").strip()
+            declared_term = str(scoped.get("semester") or scoped.get("term") or "").strip()
+            declared_account = str(scoped.get("account_scope") or "").strip()
+            scoped["semester"] = (term if term and
+                                  (not declared_term or declared_term == term) else "")
+            scoped["account_scope"] = (account if account and
+                                       (not declared_account or declared_account == account)
+                                       else "")
+            return scoped
+
         pending = [o["target"] for o in self.orders if not o.get("acted")]
-        out = [d.as_dict() for d in reconcile(pending, evidence)]
+        decisions = reconcile([verified_scope(t) for t in pending], evidence)
+        out = []
+        for target, decision in zip(pending, decisions):
+            row = decision.as_dict()
+            # Never include the verified student identifier in public reports.
+            row["target"] = dict(target)
+            out.append(row)
         for o in self.orders:
             if o.get("acted"):
-                v = fuse(o["target"], evidence)
+                v = fuse(verified_scope(o["target"]), evidence)
                 out.append({"target": o["target"], "verdict": v.verdict,
                             "action": v.action, "channels": v.channels,
                             "reason": v.reason})

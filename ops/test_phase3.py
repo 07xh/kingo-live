@@ -277,6 +277,50 @@ class TestOrchestrator(unittest.TestCase):
                      lambda _: [Offering("C1", "01", 60, 5)])
         self.assertEqual(d3.kind, "duplicate")
 
+    def test_verified_official_readback_confirms_exact_class(self):
+        from seat_events import Decision
+        sent = Collector()
+        o = orch.Orchestrator(self._mission(executor=sent))
+        o.phase = orch.Phase("watch")
+        target = {"course_id": "C1", "class_id": "01", "priority": 1}
+        fired = o.act(Decision(kind="submit", action="fire", target=target))
+        self.assertTrue(fired["acted"], fired)
+        self.assertEqual(sent.count, 1)
+        exact = Evidence("official_list", "C1", "01", True,
+                         semester="2026-2027-1",
+                         account_scope="fictional-phase3-account")
+        out = o.verify([exact])
+        self.assertEqual(out[0]["verdict"], "confirmed")
+        self.assertNotIn("account_scope", out[0]["target"])
+        self.assertNotIn("semester", out[0]["target"])
+
+    def test_official_readback_rejects_scope_conflict(self):
+        from seat_events import Decision
+        o = orch.Orchestrator(self._mission(executor=Collector()))
+        o.phase = orch.Phase("watch")
+        target = {"course_id": "C1", "class_id": "01", "priority": 1,
+                  "term": "different-term"}
+        fired = o.act(Decision(kind="submit", action="fire", target=target))
+        self.assertTrue(fired["acted"], fired)
+        official = Evidence("official_list", "C1", "01", True,
+                            semester="2026-2027-1",
+                            account_scope="fictional-phase3-account")
+        out = o.verify([official])
+        self.assertNotEqual(out[0]["verdict"], "confirmed")
+
+    def test_monitor_only_verification_keeps_account_private(self):
+        from seat_events import Decision
+        o = orch.Orchestrator(self._mission())
+        o.phase = orch.Phase("watch")
+        target = {"course_id": "C1", "class_id": "01"}
+        self.assertFalse(o.act(Decision("submit", "fire", target=target))["acted"])
+        official = Evidence("official_list", "C1", "01", True,
+                            semester="2026-2027-1",
+                            account_scope="fictional-phase3-account")
+        out = o.verify([official])
+        self.assertEqual(out[0]["action"], "stop")
+        self.assertNotIn("account_scope", out[0]["target"])
+
     def test_executor_failure_marks_pending(self):
         calls = []
         def bad(_t):

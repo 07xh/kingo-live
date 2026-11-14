@@ -26,7 +26,10 @@ Zero third-party dependencies. Python 3.10+.
 """
 from __future__ import annotations
 
+import sys
 import time
+import logging
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 try:                                                   # package or direct run
@@ -36,6 +39,25 @@ except ImportError:                                    # pragma: no cover
 
 __all__ = ["make_receipt", "QkExecutor", "SniperExecutor",
            "build_executor", "receipt_to_evidence"]
+
+def _enable_repository_imports() -> None:
+    """Resolve sibling execution packages from any working directory."""
+    root = str(Path(__file__).resolve().parents[1])
+    if root not in sys.path:
+        sys.path.insert(0, root)
+
+
+class _BridgeLog:
+    """Minimal logger compatible with qk's custom ok() convention."""
+    def __init__(self):
+        self._logger = logging.getLogger("ops.executor_bridge")
+
+    def ok(self, message, *args, **kwargs):
+        self._logger.info(message, *args, **kwargs)
+
+    def __getattr__(self, method):
+        return getattr(self._logger, method)
+
 
 # qk.adapters.base result codes with write semantics
 _WRITE_UNKNOWN_CODES = {"success", "enrolled", "unknown", "auth"}
@@ -141,10 +163,11 @@ class QkExecutor(_LifecycleMixin):
     def _ensure_ready(self) -> None:
         if self._adapter is None:
             if self._factory is None:
-                from qk.adapters import make as factory   # lazy, repo root on path
+                _enable_repository_imports()
+                from qiangke.qk.adapters import make as factory
                 self._factory = factory
             self._adapter = self._factory(self._kind, self._acct,
-                                          self._opts, self._log)
+                                          self._opts, self._log if self._log is not None else _BridgeLog())
         if not self._ready:
             self._adapter.open()
             if not self._adapter.login():
@@ -195,8 +218,8 @@ class SniperExecutor(_LifecycleMixin):
     def _ensure_ready(self) -> None:
         if self._sniper is None:
             if self._importer is None:
-                import hs_sniper as module           # lazy, repo root on path
-                module = module
+                _enable_repository_imports()
+                from ncwu import hs_sniper as module
                 self._sniper = module.Sniper(self._cfg)
             else:
                 self._sniper = self._importer().Sniper(self._cfg)
