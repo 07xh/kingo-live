@@ -300,6 +300,18 @@ class Orchestrator:
             "offers": len(offers), "decision": d.kind})
         return d
 
+    @staticmethod
+    def _public_order(order: dict) -> dict:
+        """Expose outcome metadata, never arbitrary executor target fields."""
+        public = {key: value for key, value in order.items()
+                  if key not in ("target", "result")}
+        target = order.get("target") or {}
+        if isinstance(target, dict):
+            public["target"] = {key: target[key] for key in
+                                ("course_id", "class_id", "priority")
+                                if key in target}
+        return public
+
     # -- phase: act -----------------------------------------------------
     def act(self, decision: Decision) -> dict:
         """Translate a fire decision into a single, explicit order.
@@ -360,13 +372,13 @@ class Orchestrator:
             order["reason"] = f"shared_intent_unavailable:{type(exc).__name__}"
             self.driver.gate.mark_pending(target, order["reason"])
             self.orders.append(order)
-            return order
+            return self._public_order(order)
         if not reserved:
             order["acted"] = False
             order["reason"] = "shared_intent_pending_needs_official_reconciliation"
             self.driver.gate.mark_pending(target, order["reason"])
             self.orders.append(order)
-            return order
+            return self._public_order(order)
         # SQLite reservation is durable before any possible socket write.
         try:
             result = self.mission.executor(target)
@@ -377,10 +389,10 @@ class Orchestrator:
             order["acted"] = False
             order["error"] = type(exc).__name__
             self.orders.append(order)
-            return order
+            return self._public_order(order)
         order["acted"] = True
         self.orders.append(order)
-        return order
+        return self._public_order(order)
 
     # -- phase: verify --------------------------------------------------
     def verify(self, evidence: Sequence[Evidence]) -> List[dict]:
