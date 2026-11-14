@@ -58,7 +58,7 @@ if (_root / "contracts" / "enrollment_evidence.py").is_file() and str(_root) not
 from contracts.enrollment_evidence import (
     VerificationState, normalized_official_rows, verify_selection,
 )
-from qiangke.qk.intent_journal import IntentJournal
+from contracts.intent_bridge import reserve_shared_intent
 
 if os.name == "nt":
     import msvcrt
@@ -961,11 +961,13 @@ class Engine:
             # The official response account and semester were independently
             # checked in the preflight read above.
             try:
-                reserved = IntentJournal(self.shared_intent_db).reserve(
+                reserved = reserve_shared_intent(
                     school=self.cfg["base_url"],
                     account=self.cfg["account_scope"],
                     term=self.cfg["xnxq"],
-                    course={"kch_id": offering.course_id, "xkid": offering.class_id},
+                    course_id=offering.course_id,
+                    class_id=offering.class_id,
+                    path=self.shared_intent_db,
                 )
             except (OSError, ValueError, sqlite3.Error):
                 return Attempt(ts=time.time(), action="submit",
