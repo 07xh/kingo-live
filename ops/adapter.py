@@ -49,7 +49,12 @@ def normalize_target(raw: Dict[str, Any]) -> Dict[str, Any]:
             out[str(k)] = v          # unknown keys pass through untouched
             continue
         if canon in seen:
-            continue                 # first alias wins; no silent overwrite
+            # Two legacy clients may supply both e.g. kcid and course_id.
+            # Only identical values are safe; first-wins silently chooses the
+            # wrong course or teaching class when the aliases disagree.
+            if str(out[canon]).strip() != str(v).strip():
+                raise ValueError(f"conflicting aliases for {canon}")
+            continue
         seen.add(canon)
         out[canon] = v
     for req in REQUIRED:
