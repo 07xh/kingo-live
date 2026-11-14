@@ -171,10 +171,10 @@ def load_mission(source: Any, **overrides) -> Dict[str, Any]:
             kw["sessions"] = max(1, int(v))
         elif lk == "catalog_path":
             kw["catalog_path"] = str(v)
-        elif lk in ("official_school_origin", "school_origin"):
-            kw["official_school_origin"] = str(v)
-        elif lk == "account_scope":
-            kw["account_scope"] = str(v)
+        elif lk in ("verified_school_origin", "official_school_origin"):
+            kw["verified_school_origin"] = str(v)
+        elif lk == "verified_account_id":
+            kw["verified_account_id"] = str(v)
         elif lk in ("enrollment_semester", "official_term"):
             kw["enrollment_semester"] = str(v)
         elif lk == "shared_intent_db":
