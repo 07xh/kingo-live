@@ -234,6 +234,9 @@ class TestOrchestratorEndToEnd(unittest.TestCase):
     """Full loopback: bridge as Mission.executor drives a real submit."""
 
     def _run(self):
+        import tempfile
+        tempdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tempdir.cleanup)
         httpd = ThreadingHTTPServer(("127.0.0.1", 0), LoopbackHandler)
         threading.Thread(target=httpd.serve_forever, daemon=True).start()
         port = httpd.server_address[1]
@@ -246,6 +249,10 @@ class TestOrchestratorEndToEnd(unittest.TestCase):
             mission = orch.Mission(
                 targets=[{"course_id": "C9", "class_id": "J9",
                           "priority": 1}],
+                verified_school_origin="https://synthetic.invalid",
+                verified_account_id="fictional-bridge-loopback",
+                enrollment_semester="2026-2027-1",
+                shared_intent_db=str(Path(tempdir.name) / "shared.sqlite3"),
                 executor=executor)
             o = orch.Orchestrator(mission)
             o.plan_with()          # recon -> plan
