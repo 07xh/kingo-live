@@ -140,6 +140,23 @@ def main() -> int:
         classes = ",".join(sorted(results[sha]))
         path = names[sha].replace("\t", "_").replace("\n", "_")
         print(f"AUDIT_FINDING path={path} blob_sha={sha} classes={classes}")
+    # Trace only candidate blobs with account/password/session indicators to
+    # the exact publicly reachable ref families; never print their contents.
+    suspicious = {sha for sha, kinds in results.items()
+                  if "candidate_session_cookie" in kinds
+                  or "candidate_password_literal" in kinds}
+    if suspicious:
+        relationships = {sha: [] for sha in suspicious}
+        for ref in refs:
+            listed = git("rev-list", "--objects", ref)
+            present = {line.split(b" ", 1)[0].decode("ascii")
+                       for line in listed.splitlines()}
+            for sha in suspicious.intersection(present):
+                relationships[sha].append(ref)
+        for sha in sorted(suspicious):
+            matches = relationships[sha]
+            print(f"AUDIT_REACHABILITY blob_sha={sha} "
+                  f"refs={','.join(matches[:30])} ref_count={len(matches)}")
     print("AUDIT_SCOPE all locally fetched reachable branch/tag/PR refs; "
           "excludes external clones, GitHub caches and unreachable objects")
     if any(any(not x.startswith("candidate_") for x in hits) for hits in results.values()):
