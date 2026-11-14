@@ -65,11 +65,13 @@ async def run_enrollment(engine, targets: Sequence[Target]) -> RunReport:
     engine._gate()
 
     states = {target.key: "未执行" for target in targets}
+    delivery = {target.key: "not_sent" for target in targets}
     fsms = {target.key: EnrollmentFSM() for target in targets}
 
     def report(halted: bool) -> RunReport:
         return RunReport(states.copy(), halted,
-                         {key: fsm.history for key, fsm in fsms.items()})
+                         {key: fsm.history for key, fsm in fsms.items()},
+                         delivery.copy())
 
     with engine.journal.exclusive():
         for fsm in fsms.values():
@@ -124,8 +126,17 @@ async def run_enrollment(engine, targets: Sequence[Target]) -> RunReport:
             identity = (target.course_id, target.class_id)
             journal_state = engine.journal.status(target)
 
+            # Old V1 fingerprints included semester/course/class only,
+            # never a verified account. A positive selection for the CURRENT
+            # account cannot prove which account produced this old intent.
+            # Preserve its legacy-pending fence for explicit review.
+            if journal_state == "legacy_pending":
+                states[target.key] = "历史V1记录无账号归属，保留待核验；本次未发送"
+                fsm.move(EngineState.PROTECTED, "legacy_account_unbound")
+                return report(True)
+
             if identity in enrolled:
-                if journal_state in ("pending", "rejected", "legacy_pending"):
+                if journal_state in ("pending", "rejected"):
                     engine.journal.record_confirmed(target)
                 states[target.key] = "已在官方选课记录中"
                 fsm.move(EngineState.SUCCESS, "official_record")
@@ -237,6 +248,9 @@ async def run_enrollment(engine, targets: Sequence[Target]) -> RunReport:
                 return report(True)
 
             fsm.move(EngineState.SUBMITTING, "hmac_intent_persisted")
+            # The durable intent is reserved, but an actual socket write is
+            # not yet independently proven. Do not label it 'sent' by default.
+            delivery[target.key] = "unknown"
             receipt = None
             submit_error = False
             try:
@@ -244,6 +258,10 @@ async def run_enrollment(engine, targets: Sequence[Target]) -> RunReport:
                 if not isinstance(receipt, SubmitReceipt):
                     receipt = None
                     submit_error = True
+                else:
+                    # A typed gateway receipt confirms only that the callback
+                    # returned a response; it is not official enrolled proof.
+                    delivery[target.key] = "response_received"
             except Exception:
                 submit_error = True
             fsm.move(EngineState.VERIFYING, "submit_outcome_unknown"
