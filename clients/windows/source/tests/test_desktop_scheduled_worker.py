@@ -31,6 +31,7 @@ def engine(*, verified=True, close=None):
         official_window_verified=verified,
         official_write_verified=verified,
         account_scope="synthetic-account",
+        official_school_origin="https://synthetic.invalid",
     )
     if close is not None:
         gateway.aclose = close
