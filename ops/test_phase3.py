@@ -310,6 +310,23 @@ class TestOrchestrator(unittest.TestCase):
         self.assertNotIn("account_scope", out[0]["target"])
         self.assertNotIn("semester", out[0]["target"])
 
+    def test_verified_report_hides_executor_target_secrets(self):
+        from seat_events import Decision
+        mission = self._mission(executor=Collector())
+        mission.targets[0]["access_token"] = "SENSITIVE_MARKER"
+        o = orch.Orchestrator(mission)
+        o.phase = orch.Phase("watch")
+        act = o.act(Decision(kind="submit", action="fire",
+                             target=mission.targets[0]))
+        self.assertTrue(act["acted"])
+        exact = Evidence("official_list", "C1", "01", True,
+                         semester="2026-2027-1",
+                         account_scope="fictional-phase3-account")
+        verified = o.verify([exact])
+        self.assertEqual(verified[0]["verdict"], "confirmed")
+        self.assertNotIn("SENSITIVE_MARKER", str(verified))
+        self.assertNotIn("SENSITIVE_MARKER", str(o.report()))
+
     def test_official_readback_rejects_scope_conflict(self):
         from seat_events import Decision
         o = orch.Orchestrator(self._mission(executor=Collector()))
