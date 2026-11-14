@@ -28,6 +28,8 @@ class ExistingExecutorGateway:
     )
     _READS = ("selection_window", "read_enrollments",
               "list_offerings", "read_schedule")
+    _IDENTITY_FIELDS = ("account_scope", "enrollment_semester",
+                        "verified_account_id", "verified_school_origin")
 
     def __init__(self, source, executor: Callable[[dict], dict],
                  journal: AttemptJournal) -> None:
@@ -40,12 +42,28 @@ class ExistingExecutorGateway:
         self.source = source
         self.executor = executor
         self.journal = journal
-        for name in self._CAPABILITIES:
-            setattr(self, name, getattr(source, name, None) is True)
-        self.account_scope = getattr(source, "account_scope", None)
-        self.enrollment_semester = getattr(source, "enrollment_semester", None)
-        self.verified_account_id = getattr(source, "verified_account_id", None)
-        self.verified_school_origin = getattr(source, "verified_school_origin", None)
+
+    def __getattr__(self, name: str):
+        """Never cache account/permission evidence across session changes.
+
+        A Windows engine can be prepared before the user signs out or changes
+        the official account. Read the current source attributes on every gate.
+        """
+        if name in self._CAPABILITIES:
+            return getattr(self.source, name, None) is True
+        if name in self._IDENTITY_FIELDS:
+            return getattr(self.source, name, None)
+        raise AttributeError(name)
+
+    def _check_readback_identity(self) -> None:
+        """Readback may continue after write permission expires, not on a new account."""
+        if (self.official_enrollment_verified is not True
+                or self.journal.shared_intent_db is None
+                or self.account_scope != self.journal.account_scope
+                or self.enrollment_semester != self.journal.semester
+                or self.verified_account_id != self.journal.verified_account_id
+                or self.verified_school_origin != self.journal.school_origin):
+            raise EnrollmentNotReady("已选数据源与持久化记录的官方账号或学期不一致")
 
     def _check_identity(self) -> None:
         if (not all(getattr(self, item) is True for item in self._CAPABILITIES)
@@ -60,7 +78,11 @@ class ExistingExecutorGateway:
         return await self.source.selection_window()
 
     async def read_enrollments(self):
-        return await self.source.read_enrollments()
+        self._check_readback_identity()
+        rows = await self.source.read_enrollments()
+        # The source may have switched accounts while the async read awaited.
+        self._check_readback_identity()
+        return rows
 
     async def list_offerings(self):
         return await self.source.list_offerings()
