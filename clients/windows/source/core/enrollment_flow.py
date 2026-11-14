@@ -258,9 +258,10 @@ async def run_enrollment(engine, targets: Sequence[Target]) -> RunReport:
                 if not isinstance(receipt, SubmitReceipt):
                     receipt = None
                     submit_error = True
-                else:
-                    # A typed gateway receipt confirms only that the callback
-                    # returned a response; it is not official enrolled proof.
+                elif receipt.accepted is not None:
+                    # Only an explicit positive/negative gateway receipt
+                    # is classed as returned acknowledgement. An accepted=None
+                    # object is explicitly ambiguous and remains unknown.
                     delivery[target.key] = "response_received"
             except Exception:
                 submit_error = True
