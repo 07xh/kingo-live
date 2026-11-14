@@ -76,6 +76,49 @@ class SubmissionTests(unittest.TestCase):
                 self.assertEqual(r.raw, '')
                 self.assertNotIn('PRIVATE_RESPONSE_SENTINEL', r.msg)
 
+    def test_legacy_class_list_serializes_one_scalar_in_every_alias(self):
+        ad = self.adapter(KingoAdapter)
+        _, fields, body, _ = ad._render_tpl(
+            {"url": "/synthetic", "form": {
+                "xkid": "{xkid}", "legacy": "{jxb_ids}",
+                "alias": "{class_id}", "course": "{kch_id}",
+            }},
+            {"kch_id": "COURSE-01", "jxb_ids": ["COURSE-01-009"]},
+        )
+        self.assertIsNone(body)
+        self.assertEqual(fields, {
+            "xkid": "COURSE-01-009", "legacy": "COURSE-01-009",
+            "alias": "COURSE-01-009", "course": "COURSE-01",
+        })
+        self.assertNotIn("[", repr(fields["xkid"]))
+
+    def test_conflicting_or_ambiguous_class_refuses_http_write(self):
+        ad = self.adapter(KingoAdapter)
+        invalid = (
+            {"xkid": "CLASS-01", "jxb_ids": ["CLASS-02"]},
+            {"jxb_ids": ["CLASS-01", "CLASS-02"]},
+            {"jxb_ids": []},
+            {"xkid": ["CLASS-01"]},
+            {"xkid": "unknown"},
+            {},
+        )
+        for bad in invalid:
+            with self.subTest(bad=bad), patch.object(ad, "_send") as sending:
+                result = ad.grab({"kch_id": "COURSE-01", **bad})
+                self.assertFalse(result.ok)
+                self.assertIs(result.write_attempted, False)
+                self.assertEqual(result.attempts, 0)
+                sending.assert_not_called()
+
+    def test_readonly_template_remains_usable_without_class_id(self):
+        ad = self.adapter(KingoAdapter)
+        url, form, body, headers = ad._render_tpl(
+            {"url": "/synthetic/list", "form": {"q": "all"}}, {})
+        self.assertEqual(url, "/synthetic/list")
+        self.assertEqual(form, {"q": "all"})
+        self.assertIsNone(body)
+        self.assertEqual(headers, {})
+
     def test_unknown_stops_worker_without_retry_or_success_notification(self):
         ad = self.adapter(KingoAdapter)
         eng = Engine({'system': {'base_url': 'https://example.invalid',
