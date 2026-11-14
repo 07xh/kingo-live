@@ -18,6 +18,8 @@ Zero third-party dependencies. Python 3.10+.
 from __future__ import annotations
 
 import time
+from pathlib import Path
+import sys
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
@@ -99,12 +101,20 @@ class Mission:
     sessions: int = 1
     respect_retry_after: bool = True
     executor: Optional[Callable[[Dict[str, Any]], Any]] = None
+    # These fields are required for a physical executor callback. A host
+    # label or a manually typed display name is NOT an authenticated identity.
+    official_school_origin: str = ""
+    account_scope: str = ""
+    enrollment_semester: str = ""
+    shared_intent_db: Optional[str] = None
     catalog_path: str = "/hsjw//wap/mycourseschedule.action"
     ticket_names: Tuple[str, ...] = ("token", "csrf", "_csrf")
 
     def public(self) -> dict:
         d = {k: v for k, v in self.__dict__.items()
-             if k not in ("executor", "targets")}
+             if k not in ("executor", "targets", "account_scope", "shared_intent_db")}
+        d["account_scope"] = "<configured>" if self.account_scope else "<missing>"
+        d["shared_intent_db"] = "<configured>" if self.shared_intent_db else "<default>"
         d["targets"] = [
             {k: ("<redacted>" if k in ("cookie", "token", "password")
                  else v) for k, v in t.items()}
@@ -303,6 +313,32 @@ class Orchestrator:
             if self.plan.prebuild else None
         order = {"target": target, "body_prebuilt": body is not None,
                  "channel": self.plan.channel}
+        # A process-local gate cannot fence another executable or a restart.
+        # The common SQLite/HMAC intent must be reserved before callback I/O.
+        try:
+            repo_root = str(Path(__file__).resolve().parents[1])
+            if repo_root not in sys.path:
+                sys.path.insert(0, repo_root)
+            from contracts.intent_bridge import reserve_shared_intent
+            reserved = reserve_shared_intent(
+                school=self.mission.official_school_origin,
+                account=self.mission.account_scope,
+                term=self.mission.enrollment_semester,
+                course_id=str(target["course_id"]),
+                class_id=str(target["class_id"]),
+                path=self.mission.shared_intent_db)
+        except Exception as exc:
+            order["acted"] = False
+            order["reason"] = f"shared_intent_unavailable:{type(exc).__name__}"
+            self.driver.gate.mark_pending(target, order["reason"])
+            self.orders.append(order)
+            return order
+        if not reserved:
+            order["acted"] = False
+            order["reason"] = "shared_intent_pending_needs_official_reconciliation"
+            self.driver.gate.mark_pending(target, order["reason"])
+            self.orders.append(order)
+            return order
         # The callback may have sent a physical request before it raises.
         # Fence this order BEFORE invoking the external executor, not after.
         self._executed.add(key)
