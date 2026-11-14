@@ -35,6 +35,7 @@ import path from 'path';
 import crypto from 'crypto';
 import vm from 'vm';
 import { fileURLToPath } from 'url';
+import { nodeScopeFromWindow, reserveNodeSharedIntent } from '../contracts/node_shared_intent.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const BASE = 'https://jwmis.ncwu.edu.cn/hsjw';
@@ -42,7 +43,9 @@ const SESS_FILE = path.join(__dirname, 'session.json');
 const OUT_DIR = path.join(__dirname, 'paoke_out');
 
 const GBK_SUBMIT = '%CC%E1%BD%BB'; // "提交"
-const MENUCODE = 'S2020202';       // 网上选课 → 正选
+const MENUCODE = 'S2020202';
+const SUBMIT_PATH = '/jw/common/saveElectiveCourse.action';
+const SUBMIT_AUTHORITY = Symbol('durable-intent-reserved');       // 网上选课 → 正选
 
 const md5 = (s) => crypto.createHash('md5').update(s, 'utf8').digest('hex');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -118,7 +121,14 @@ async function seal(plain, sess) {
   return `params=${encodeURIComponent(p)}&token=${token}&timestamp=${encodeURIComponent(ts)}`;
 }
 
-async function post(p, body, sess, referer) {
+async function post(p, body, sess, referer, permit = null) {
+  // Raw diagnostics and probes cannot bypass the shared durable intent fence.
+  if (String(p).split('?')[0] === SUBMIT_PATH) {
+    if (!permit || permit.authority !== SUBMIT_AUTHORITY || permit.spent !== false) {
+      throw new Error('提交被阻止：缺少共享 SQLite 持久化意图');
+    }
+    permit.spent = true; // consume before the first possible physical send
+  }
   const r = await fetch(BASE + p, {
     method: 'POST',
     headers: { ...hdrs(sess, referer, true), 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' },
@@ -302,12 +312,23 @@ function verdict(text) {
   return { code: 'OTHER', msg, status };
 }
 
-async function submitElect(sess, plain) {
+async function submitElect(sess, plain, scope) {
+  // Prepare request data before reserving the one physical write.
   const body = await seal(plain, sess);
-  // Referer 必须是弹窗页，用其它值会触发频率限制页
-  const r = await post('/jw/common/saveElectiveCourse.action', body, sess,
-    BASE + '/student/report/wsxk.zx_promt.jsp');
-  return { ...verdict(r.text), raw: r.text };
+  // Reuse Qiangke's existing SQLite salt, schema and historical fingerprints.
+  if (!reserveNodeSharedIntent(scope)) {
+    return { code: 'BLOCKED', msg: '该课程已有提交意图，禁止重复发送；请核对官方已选记录' };
+  }
+  const permit = { authority: SUBMIT_AUTHORITY, spent: false };
+  try {
+    const r = await post(SUBMIT_PATH, body, sess,
+      BASE + '/student/report/wsxk.zx_promt.jsp', permit);
+    // HTTP acknowledgement and business success text are NOT official proof.
+    return { code: 'PENDING', msg: '请求结果需用官方已选课程明细核对',
+      transport: verdict(r.text).code };
+  } catch {
+    return { code: 'PENDING', msg: '请求状态不确定，保留意图，禁止重发' };
+  }
 }
 
 // ============ 命令: import ============
@@ -624,6 +645,15 @@ async function cmdDrop(sess, kcdm, skbjdm, skbzdm) {
 }
 
 async function cmdRaw(sess, p, plain) {
+  // Raw is a read-only diagnostic tool, not an alternate write path.
+  const allowed = new Set([
+    '/jw/common/getWsxkTimeRange.action',
+    '/jw/common/getSelectLessonScoreKcsInfo.action',
+    '/taglib/DataTable.jsp',
+  ]);
+  if (!allowed.has(String(p || '').split('?')[0])) {
+    throw new Error('raw 只允许已审核只读查询；提交需经过持久化保护');
+  }
   const body = plain.startsWith('params=') ? plain : await seal(plain, sess);
   const r = await post(p, body, sess, BASE + '/student/wsxk.zx.html?menucode=' + MENUCODE);
   console.log('HTTP', r.status, r.text.length + 'B');
@@ -638,8 +668,6 @@ async function cmdProbe(sess) {
     ['POST', '/jw/common/getWsxkTimeRange.action?xktype=2'],
     ['POST', '/jw/common/getSelectLessonScoreKcsInfo.action'],
     ['GET', '/student/wsxk.zx.html?menucode=' + MENUCODE],
-    ['POST', '/jw/common/saveElectiveCourse.action'],
-    ['POST', '/jw/common/cancelElectiveCourse.action'],
   ];
   for (const [m, p] of eps) {
     try {
@@ -682,10 +710,10 @@ const has = (k) => args.some((a) => a === '--' + k || a.startsWith('--' + k + '=
     case 'skb': return cmdSkb(sess, args[0], opt('xf', ''));
     case 'grab':
       return cmdGrab(sess, args[0], {
-        conc: Number(opt('conc', 3)) || 3,
+        conc: Number(opt('conc', 1)) || 1,
         skb: opt('skb', ''),
         dry: has('dry'),
-        retry: Number(opt('retry', 8)) || 8,
+        retry: Number(opt('retry', 1)) || 1,
       });
     case 'watch': return cmdWatch(sess, args[0], Number(args[1]) || 3);
     case 'my': return cmdMy(sess);
