@@ -172,7 +172,20 @@ class ReleaseMonitor:
                 poll_cost_ms: float = 0.0) -> List[ReleaseEvent]:
         self.polls += 1
         now = time.time()
-        current = {self._fp(o): o for o in offers}
+        current = {}
+        for o in offers:
+            if (not getattr(o, "course_id", None)
+                    or not getattr(o, "class_id", None)):
+                continue
+            fp = self._fp(o)
+            if remaining_count(o) is None:
+                # Preserve a first unknown observation as a sentinel: the
+                # next known positive is NOT evidence of a fresh release.
+                # A later unknown must not overwrite an existing known count.
+                if fp not in self.snapshot:
+                    current[fp] = o
+                continue
+            current[fp] = o
         out: List[ReleaseEvent] = []
         for fp, o in current.items():
             prev = self.snapshot.get(fp)
@@ -185,7 +198,8 @@ class ReleaseMonitor:
             prv = remaining_count(prev)
             # A classified event always has a known current count.
             out.append(self._event(kind, o, cur, prv, now, poll_cost_ms))
-        self.snapshot = current
+        # Preserve comparable prior observations across empty/partial polls.
+        self.snapshot.update(current)
         self.events.extend(out)
         return out
 
@@ -233,21 +247,29 @@ class TargetRanker:
 
     @staticmethod
     def _match(offers: List[Offering], target: dict) -> Optional[Offering]:
+        # A course-only match cannot identify the intended teaching class.
+        course_id = str(target.get("course_id") or "").strip()
         want = str(target.get("class_id") or "").strip()
+        if not course_id or not want:
+            return None
         for o in offers:
-            if str(o.course_id) != str(target["course_id"]):
-                continue
-            if want and str(o.class_id) != want:
-                continue
-            return o
+            if (str(getattr(o, "course_id", "")).strip() == course_id
+                    and str(getattr(o, "class_id", "")).strip() == want):
+                return o
         return None
 
     def score(self, offer: Offering, priority: int = 1) -> float:
-        cap = max(1, int(offer.capacity or 0))
-        ratio = min(1.0, max(0.0, int(offer.remain or 0) / cap))
-        heat = min(1.0, max(0.0, float(offer.heat or 0.0)))
-        return round(self.w_remain * ratio
-                     + self.w_heat * (1.0 - heat)
+        remain = remaining_count(offer)
+        if remain is None or remain <= 0:
+            return float("-inf")
+        capacity = getattr(offer, "capacity", None)
+        ratio = (min(1.0, remain / capacity)
+                 if isinstance(capacity, int) and not isinstance(capacity, bool)
+                 and capacity > 0 else 0.0)
+        heat = getattr(offer, "heat", None)
+        heat_bonus = (self.w_heat * (1.0 - min(1.0, max(0.0, float(heat))))
+                      if heat is not None else 0.0)
+        return round(self.w_remain * ratio + heat_bonus
                      - self.w_priority * max(0, priority - 1), 6)
 
     def reorder(self, targets: List[dict],
@@ -257,7 +279,7 @@ class TargetRanker:
             if not t.get("enabled", True):
                 continue
             o = self._match(offers, t)
-            if o is None:
+            if o is None or not remaining_count(o):
                 continue
             prio = int(t.get("priority", i + 1))
             scored.append((self.score(o, prio), prio, dict(t)))
@@ -366,8 +388,7 @@ class EventDriver:
             d = Decision("overload", "backoff", f"http={status}",
                          self.poller.next_interval())
         elif status != 200:
-            # A redirect, empty/error response, or missing authorization
-            # can never erase a valid catalog snapshot or signal a release.
+            # A redirect or failed request cannot erase a catalog snapshot.
             d = Decision("read_unavailable", "stop", f"http={status}",
                          self.poller.next_interval())
         else:

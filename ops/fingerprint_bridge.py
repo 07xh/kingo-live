@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import hashlib
 import json
 import os
 import socket
@@ -352,7 +353,8 @@ class FingerprintInjection:
             return
         method = str(getattr(req, "method", "GET")).upper()
         if method not in READ_ONLY_METHODS and not self.allow_write:
-            self.log.append(f"blocked write {method} {url[:100]}")
+            self.log.append("blocked write " + method + " path_sha256="
+                        + hashlib.sha256(url.encode("utf-8")).hexdigest()[:12])
             if hasattr(flow, "kill"):
                 flow.kill()
             return

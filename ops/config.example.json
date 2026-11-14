@@ -75,6 +75,9 @@
     "channels": {"official_list": 1.0, "wap_schedule": 0.8, "credit_summary": 0.6, "zxxq": 0.5},
     "stale_penalty": 0.3,
     "confirm_threshold": 1.2,
+    "confirm_threshold_is_advisory_only": true,
+    "require_exact_fresh_official_list": true,
+    "require_account_semester_scope": true,
     "all_read_only": true
   },
   "signature": {

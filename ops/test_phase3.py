@@ -302,10 +302,17 @@ class TestOrchestrator(unittest.TestCase):
                 lambda _: [Offering("C1", "01", 60, 0)])
         decision = o.watch(orch.SimpleResponse(200, {}, "", 5.0),
                            lambda _: [Offering("C1", "01", 60, 2)])
-        self.assertEqual(decision.kind, "submit")
+        # Strict target matching rejects ambiguity before submission.
+        self.assertEqual(decision.kind, "no_match")
         result = o.act(decision)
         self.assertFalse(result["acted"])
-        self.assertIn("teaching-class", result["reason"])
+        self.assertIn("decision=no_match", result["reason"])
+        # Defense-in-depth: a forged fire decision also cannot write.
+        from seat_events import Decision
+        forged = Decision("submit", "fire", target=mission.targets[0])
+        refused = o.act(forged)
+        self.assertFalse(refused["acted"])
+        self.assertIn("teaching-class", refused["reason"])
         self.assertEqual(calls.count, 0)
 
     def test_recon_probe_readonly_matrix(self):

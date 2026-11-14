@@ -327,8 +327,12 @@ def test_preflight(c: C) -> None:
 # ---------------------------------------------------------------------------
 
 def test_crosscheck(c: C) -> None:
-    t = {"course_id": "C1", "class_id": "01"}
-    e = crosscheck.Evidence
+    t = {"course_id": "C1", "class_id": "01",
+         "semester": "2026-2027-1", "account_scope": "account-demo"}
+    def e(channel, course_id, class_id, present, latency_ms, stale, source):
+        return crosscheck.Evidence(
+            channel, course_id, class_id, present, latency_ms, stale, source,
+            semester="2026-2027-1", account_scope="account-demo")
     stale_neg = e("official_list", "C1", "01", False, 40.0, True, "cached")
     wap_pos = e("wap_schedule", "C1", "01", True, 55.0, False, "wap")
     credit_pos = e("credit_summary", "C1", "01", True, 61.0, False, "credit")
