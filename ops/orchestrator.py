@@ -119,7 +119,9 @@ class Mission:
         d["verified_account_id"] = "<configured>" if self.verified_account_id else "<missing>"
         d["shared_intent_db"] = "<configured>" if self.shared_intent_db else "<default>"
         d["targets"] = [
-            {k: ("<redacted>" if k in ("cookie", "token", "password")
+            {k: ("<redacted>" if any(h in k.lower() for h in
+                ("cookie", "token", "password", "secret", "authorization",
+                 "credential", "session", "key"))
                  else v) for k, v in t.items()}
             for t in self.targets]
         d["executor"] = "attached" if self.executor else "monitor-only"
@@ -154,6 +156,9 @@ def build_plan(recon_report: Optional[dict] = None,
                mission: Optional[Mission] = None) -> Plan:
     """Pure function: evidence in, concrete plan out. No I/O."""
     plan = Plan(sessions=max(1, mission.sessions) if mission else 1,
+                poll_base_ms=(mission.poll_interval_base_ms if mission else 60000.0),
+                poll_hot_ms=(mission.poll_interval_hot_ms if mission else 2000.0),
+                hot_rounds=(mission.hot_rounds if mission else 10),
                 respect_retry_after=(mission.respect_retry_after
                                      if mission else True))
     er = endpoints_report or {}
@@ -218,11 +223,22 @@ class Orchestrator:
         self.pool = TicketPool(ttl_s=self.plan.ticket_ttl_s)
         self.bodies = BodyPrebuilder()
         self.shard = ConnectionShard([mission.host], sessions=self.plan.sessions)
+        self._apply_plan_runtime()
         self.clock = HighResClock()
         self.verdicts: List[dict] = []
         self.observations: List[dict] = []
         self.orders: List[dict] = []
         self._executed: set = set()
+
+    def _apply_plan_runtime(self) -> None:
+        """Apply the selected Plan without resetting live monitor/intent state."""
+        poller = self.driver.poller
+        poller.base = float(self.plan.poll_base_ms)
+        poller.hot = float(self.plan.poll_hot_ms)
+        poller.hot_rounds = max(1, int(self.plan.hot_rounds))
+        self.pool.ttl_s = float(self.plan.ticket_ttl_s)
+        self.shard = ConnectionShard([self.mission.host],
+                                     sessions=max(1, int(self.plan.sessions)))
 
     # -- phase: recon ---------------------------------------------------
     def recon_probe(self, fetch: Callable[[Endpoint], SimpleResponse],
@@ -246,6 +262,7 @@ class Orchestrator:
         self.phase.require("recon", "plan", "watch")
         self.plan = build_plan(recon_report, endpoints_report, p5_report,
                                self.mission)
+        self._apply_plan_runtime()
         if self.phase.current in ("recon", "plan"):
             self.phase.advance("plan built")
         return self.plan
@@ -282,6 +299,18 @@ class Orchestrator:
             "t": round(time.time(), 3), "status": response.status,
             "offers": len(offers), "decision": d.kind})
         return d
+
+    @staticmethod
+    def _public_order(order: dict) -> dict:
+        """Expose outcome metadata, never arbitrary executor target fields."""
+        public = {key: value for key, value in order.items()
+                  if key not in ("target", "result")}
+        target = order.get("target") or {}
+        if isinstance(target, dict):
+            public["target"] = {key: target[key] for key in
+                                ("course_id", "class_id", "priority")
+                                if key in target}
+        return public
 
     # -- phase: act -----------------------------------------------------
     def act(self, decision: Decision) -> dict:
@@ -330,39 +359,40 @@ class Orchestrator:
             repo_root = str(Path(__file__).resolve().parents[1])
             if repo_root not in sys.path:
                 sys.path.insert(0, repo_root)
-            from qiangke.qk.intent_journal import IntentJournal
+            from contracts.intent_bridge import reserve_shared_intent
             database = (os.environ.get("KINGO_INTENT_DB")
-                        or self.mission.shared_intent_db
-                        or str(Path.home() / ".kingo-assistant" / "intent-journal.sqlite3"))
-            reserved = IntentJournal(database).reserve(
+                        if "KINGO_INTENT_DB" in os.environ
+                        else self.mission.shared_intent_db)
+            reserved = reserve_shared_intent(
                 school=origin, account=account, term=term,
-                course={"kch_id": str(target["course_id"]),
-                        "xkid": str(target["class_id"])})
+                course_id=str(target["course_id"]),
+                class_id=str(target["class_id"]), path=database)
         except Exception as exc:
             order["acted"] = False
             order["reason"] = f"shared_intent_unavailable:{type(exc).__name__}"
             self.driver.gate.mark_pending(target, order["reason"])
             self.orders.append(order)
-            return order
+            return self._public_order(order)
         if not reserved:
             order["acted"] = False
             order["reason"] = "shared_intent_pending_needs_official_reconciliation"
             self.driver.gate.mark_pending(target, order["reason"])
             self.orders.append(order)
-            return order
+            return self._public_order(order)
         # SQLite reservation is durable before any possible socket write.
         try:
             result = self.mission.executor(target)
-            order["result"] = str(result)
+            order["callback_returned"] = True
+            order["result_type"] = type(result).__name__
         except Exception as exc:  # executor faults must not loop re-fires
-            self.driver.gate.mark_pending(target, f"executor_error:{exc}")
+            self.driver.gate.mark_pending(target, f"executor_error:{type(exc).__name__}")
             order["acted"] = False
-            order["error"] = f"{type(exc).__name__}: {exc}"
+            order["error"] = type(exc).__name__
             self.orders.append(order)
-            return order
+            return self._public_order(order)
         order["acted"] = True
         self.orders.append(order)
-        return order
+        return self._public_order(order)
 
     # -- phase: verify --------------------------------------------------
     def verify(self, evidence: Sequence[Evidence]) -> List[dict]:
@@ -388,7 +418,10 @@ class Orchestrator:
                 "mission": self.mission.public(),
                 "driver": self.driver.report(),
                 "observations": self.observations[-20:],
-                "orders": self.orders, "verdicts": self.verdicts}
+                "orders": [{k: v for k, v in o.items()
+                            if k not in ("target", "result")}
+                           for o in self.orders],
+                "verdicts": self.verdicts}
 
 
 def demo() -> dict:
