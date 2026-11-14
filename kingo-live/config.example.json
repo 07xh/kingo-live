@@ -1,6 +1,7 @@
 {
   "base_url": "https://TARGET_HOST",
   "account_scope": "",
+  "shared_intent_db": null,
   "xnxq": "2026-2027-1",
   "cookie": "",
   "verify_tls": true,
