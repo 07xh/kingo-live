@@ -53,9 +53,16 @@ class TestAdapter(unittest.TestCase):
         self.assertEqual(t["class_id"], "02")
         self.assertFalse(t["enabled"])
 
-    def test_first_alias_wins(self):
-        t = adapter.normalize_target({"kcid": "A", "course_id": "B"})
+    def test_duplicate_aliases_must_agree(self):
+        t = adapter.normalize_target({"kcid": "A", "course_id": "A",
+                                      "skbj": "01", "class_id": "01"})
         self.assertEqual(t["course_id"], "A")
+        self.assertEqual(t["class_id"], "01")
+        for invalid in ({"kcid": "A", "course_id": "B"},
+                        {"kcid": "A", "skbj": "01", "class_id": "02"}):
+            with self.subTest(invalid=tuple(invalid)):
+                with self.assertRaisesRegex(ValueError, "conflicting aliases"):
+                    adapter.normalize_target(invalid)
 
     def test_missing_identity_rejected(self):
         for bad in ({"skbj": "01"}, {}, {"kcid": "  "}):
