@@ -138,6 +138,7 @@ class ControlledEnrollmentTests(unittest.TestCase):
         return EnrollmentEngine(
             gateway, self.journal,
             user_opted_in=True, institution_permits_write=True,
+            shared_intent_db=self.path.parent / "shared-intents.sqlite3",
             verification_policy=VerificationPolicy(max_reads=max_reads,
                                                     interval_seconds=0))
 
