@@ -44,6 +44,7 @@ from core.session_probe import SessionProbeResult, probe_own_session
 from core.official_entries import OFFICIAL_ENTRIES, probe_official_login_surfaces
 from core.scheduled_ui_bridge import prepare_scheduled_plan
 from core.enrollment_schedule import ScheduledRunReport
+from core.enrollment_delivery import display_delivery
 from core.time_sync import TimeSync
 from main import _read_local_html, validate
 
@@ -1251,6 +1252,13 @@ class Application(tk.Tk):
                         label = descriptions.get(outcome.reason, "自动选课任务已结束｜结果待确认")
                         self.status.set(label)
                         self.log(label + "；请以真实教务记录为准。")
+                        delivery_view = display_delivery(outcome.result)
+                        self.log("本轮提交状态：" + delivery_view.headline)
+                        table = getattr(self, "table", None)
+                        for key, summary in delivery_view.target_labels.items():
+                            if table is not None and table.exists(key):
+                                table.set(key, "status", summary)
+                            self.log("目标 " + str(key) + "：" + summary)
                     elif outcome == "cancelled_before_start":
                         self.status.set("自动计划已取消｜未请求学校接口")
                     else:
