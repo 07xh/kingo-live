@@ -94,9 +94,27 @@ class _LifecycleMixin:
 
     name = "bridge"
 
+    @staticmethod
+    def _exact_target(value: Any, label: str) -> str:
+        if type(value) not in (str, int):
+            raise ValueError(f"{label} 缺少明确的单值标识")
+        result = str(value).strip()
+        if (not result or len(result) > 100
+                or result.lower() in ("unknown", "null", "none", "-")
+                or any(ord(char) < 32 for char in result)):
+            raise ValueError(f"{label} 不可信")
+        return result
+
+    def _preflight_target(self, target: Dict[str, Any]) -> None:
+        if not isinstance(target, dict):
+            raise ValueError("选课目标结构错误")
+        self._exact_target(target.get("course_id"), "课程号")
+        self._exact_target(target.get("class_id"), "教学班号")
+
     def __call__(self, target: Dict[str, Any]) -> dict:
         t0 = time.perf_counter()
         try:
+            self._preflight_target(target)
             self._ensure_ready()
         except Exception as exc:
             # A preflight error happens before _fire could send any write.
@@ -129,8 +147,8 @@ class QkExecutor(_LifecycleMixin):
 
     ``adapter`` may be a fully-constructed ``qk`` Adapter, or pass
     ``kind``/``acct``/``opts`` plus an optional ``factory`` (defaults to
-    lazily importing ``qk.adapters.make``). ``target`` keys map to the
-    qk course dict: ``course_id -> kch_id``, ``class_id -> jxb_ids[0]``.
+    lazily importing ``qk.adapters.make``). A verified class is mapped
+    consistently to scalar ``xkid`` and legacy singleton ``jxb_ids``.
     """
 
     def __init__(self, adapter: Any = None, *, kind: str = "kingo",
@@ -164,14 +182,16 @@ class QkExecutor(_LifecycleMixin):
             self._ready = True
 
     def _fire(self, target: Dict[str, Any]) -> dict:
-        course = {"kch_id": str(target.get("course_id", "")),
-                  "name": str(target.get("name", ""))}
-        class_id = str(target.get("class_id", "")).strip()
-        if class_id:
-            course["jxb_ids"] = [class_id]
-        for extra in ("xkid",):
-            if target.get(extra):
-                course[extra] = target[extra]
+        course_id = self._exact_target(target.get("course_id"), "课程号")
+        class_id = self._exact_target(target.get("class_id"), "教学班号")
+        if target.get("xkid") not in (None, "", class_id):
+            raise ValueError("选课目标教学班字段与权威代码不一致")
+        course = {
+            "kch_id": course_id,
+            "name": str(target.get("name", "")),
+            "xkid": class_id,
+            "jxb_ids": [class_id],
+        }
         t0 = time.time()
         result = self._adapter.grab(course)
         elapsed = (time.time() - t0) * 1000
@@ -201,6 +221,14 @@ class SniperExecutor(_LifecycleMixin):
         self._importer = importer
         self._ready = False
 
+    def _preflight_target(self, target: Dict[str, Any]) -> None:
+        super()._preflight_target(target)
+        # hs_sniper.fire_one passes only kcdm into its items write body.
+        # Its optional skbjdm_hint is NOT serialized. Until school evidence
+        # verifies an exact-class payload, selecting a requested class through
+        # this bridge would be a false promise and must fail before login.
+        raise ValueError("现有 Sniper 提交载荷不包含指定教学班号，禁止精确班级写入")
+
     def _ensure_ready(self) -> None:
         if self._sniper is None:
             if self._importer is None:
@@ -215,17 +243,11 @@ class SniperExecutor(_LifecycleMixin):
             self._ready = True
 
     def _fire(self, target: Dict[str, Any]) -> dict:
-        t0 = time.time()
-        ack, msg, ms = self._sniper.fire_one(
-            str(target.get("course_id", "")),
-            str(target.get("class_id", "") or ""))
-        # fire_one returns transport evidence only; keep code="unknown"
-        # unless the sniper itself claims more -- the verify phase decides.
-        return make_receipt(target, ok=bool(ack), code="unknown" if ack else "error",
-                            msg=str(msg),
-                            elapsed_ms=(time.time() - t0) * 1000,
-                            write_attempted=bool(ack) or None,
-                            executor=self.name, status=None)
+        # Also fail closed for direct invocations that bypass __call__.
+        return make_receipt(target, ok=False, code="unsupported_class_write",
+                            msg="无法证明 Sniper 写入指定教学班，未发送请求",
+                            elapsed_ms=0.0, write_attempted=False,
+                            executor=self.name)
 
 
 _KINDS = {"qk": QkExecutor, "sniper": SniperExecutor}
