@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import live_client as lc
+from qiangke.qk.intent_journal import IntentJournal
 import selftest
 
 
@@ -227,7 +228,7 @@ class IntentHTTPTests(selftest.LiveHTTPTests):
     def test_qiangke_ncwu_shared_intent_prevents_kingo_live_post(self):
         """The existing qiangke/ and ncwu/ SQLite gate is reused, not cloned."""
         cfg = self.cfg()
-        self.assertTrue(lc.IntentJournal(cfg["journal"]["shared_intent_db"]).reserve(
+        self.assertTrue(IntentJournal(cfg["journal"]["shared_intent_db"]).reserve(
             school=cfg["base_url"], account=cfg["account_scope"],
             term=cfg["xnxq"], course={"kch_id": "C001", "xkid": "T02"}))
         engine = lc.Engine(cfg, self.rec("_other_engine"))
@@ -244,7 +245,7 @@ class IntentHTTPTests(selftest.LiveHTTPTests):
         cfg = self.cfg()
         engine = lc.Engine(cfg, self.rec("_failed_db"))
         try:
-            with patch("live_client.IntentJournal",
+            with patch("live_client.reserve_shared_intent",
                        side_effect=OSError("synthetic disk failure")):
                 result = engine.enroll(confirm=True)
             self.assertEqual(result[0].reason, "shared_intent_journal_unavailable")
@@ -262,7 +263,7 @@ class IntentHTTPTests(selftest.LiveHTTPTests):
         def inspect_send(tr, method, path, **kwargs):
             if path == "/submit":
                 fired.append(True)
-                self.assertFalse(lc.IntentJournal(
+                self.assertFalse(IntentJournal(
                     engine.shared_intent_db).reserve(
                         school=cfg["base_url"], account=cfg["account_scope"],
                         term=cfg["xnxq"],
