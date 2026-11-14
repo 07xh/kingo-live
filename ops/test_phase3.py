@@ -53,9 +53,32 @@ class TestAdapter(unittest.TestCase):
         self.assertEqual(t["class_id"], "02")
         self.assertFalse(t["enabled"])
 
-    def test_first_alias_wins(self):
-        t = adapter.normalize_target({"kcid": "A", "course_id": "B"})
-        self.assertEqual(t["course_id"], "A")
+    def test_identical_aliases_can_coexist_but_conflicts_rejected(self):
+        t = adapter.normalize_target({"kcid": "000123", "course_id": "000123",
+                                      "skbj": "01", "class_id": "01"})
+        self.assertEqual(t["course_id"], "000123")
+        self.assertEqual(t["class_id"], "01")
+        for conflict in (
+            {"kcid": "A", "course_id": "B"},
+            {"kcid": "A", "skbj": "01", "class_id": "02"},
+            {"kcid": "A", "enabled": "false", "ENABLED": "true"},
+        ):
+            with self.subTest(conflict=conflict), self.assertRaises(ValueError):
+                adapter.normalize_target(conflict)
+
+    def test_enabled_strings_and_invalid_values(self):
+        for value in (False, 0, "FALSE", "0", "off", "no"):
+            self.assertFalse(adapter.normalize_target({"kcid": "C", "enabled": value})["enabled"])
+        for value in (True, 1, "TRUE", "1", "on", "yes"):
+            self.assertTrue(adapter.normalize_target({"kcid": "C", "enabled": value})["enabled"])
+        for value in ("", "unverified", 2, None, {}):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                adapter.normalize_target({"kcid": "C", "enabled": value})
+
+    def test_invalid_course_identifiers_rejected(self):
+        for value in ("", "  ", "none", "unknown", True, None, []):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                adapter.normalize_target({"kcid": value})
 
     def test_missing_identity_rejected(self):
         for bad in ({"skbj": "01"}, {}, {"kcid": "  "}):
@@ -200,6 +223,31 @@ class TestOrchestrator(unittest.TestCase):
         d = o.watch(orch.SimpleResponse(429, {}, "", 10.0), lambda _: [])
         self.assertEqual(d.kind, "rate_limited")
         self.assertGreater(d.interval_ms, 0)
+
+    def test_retry_after_seconds_and_dates(self):
+        from datetime import datetime, timedelta, timezone
+        from email.utils import format_datetime
+        from seat_events import parse_retry_after_ms
+        self.assertEqual(parse_retry_after_ms({"rEtRy-AfTeR": "120"}), 120000.0)
+        self.assertEqual(parse_retry_after_ms({"Retry-After": "nonsense"}), 0.0)
+        later = datetime.now(timezone.utc) + timedelta(seconds=150)
+        delay = parse_retry_after_ms(
+            {"Retry-After": format_datetime(later, usegmt=True)})
+        self.assertGreater(delay, 145000.0)
+        self.assertLessEqual(delay, 150000.0)
+
+        o = orch.Orchestrator(self._mission())
+        o.phase = orch.Phase("watch")
+        delayed = o.watch(
+            orch.SimpleResponse(429, {"retry-after": "120"}, "", 10.0),
+            lambda _: [])
+        self.assertEqual(delayed.kind, "rate_limited")
+        self.assertEqual(delayed.interval_ms, 120000.0)
+        overloaded = o.watch(
+            orch.SimpleResponse(503, {"Retry-After": "130"}, "", 10.0),
+            lambda _: [])
+        self.assertEqual(overloaded.kind, "overload")
+        self.assertEqual(overloaded.interval_ms, 130000.0)
 
     def test_executor_single_fire(self):
         c = Collector()
