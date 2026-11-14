@@ -14,7 +14,8 @@ Contract rules (enforced, not advisory):
 * The bridge performs **one** physical submission per call and never
   retries. Re-fire policy lives entirely in the orchestrator/intent layer.
 * Receipts are uniform dicts so verify-phase evidence fusion can consume
-  them without knowing which executor fired.
+  them without knowing which executor fired. A callback exception after
+  entering the transport has unknown delivery, not proven 'unsent'.
 * ``write_attempted`` distinguishes "the HTTP write happened but the
   outcome is unknown" (auth/unknown codes) from "rejected before any
   write" -- the same distinction the qk ``GrabResult`` carries.
@@ -90,12 +91,21 @@ class _LifecycleMixin:
         t0 = time.perf_counter()
         try:
             self._ensure_ready()
-            receipt = self._fire(target)
-        except Exception as exc:   # no auto-retry: let the intent layer decide
+        except Exception as exc:
+            # Failed lifecycle setup before _fire: no transport write started.
             return make_receipt(target, ok=False, code="error",
                                 msg=f"{type(exc).__name__}: {exc}",
                                 elapsed_ms=(time.perf_counter() - t0) * 1000,
                                 write_attempted=False, executor=self.name)
+        try:
+            receipt = self._fire(target)
+        except Exception as exc:
+            # A socket may have sent bytes before throwing. The bridge cannot
+            # prove that a write was never delivered, so leave it unknown.
+            return make_receipt(target, ok=False, code="unknown",
+                                msg=f"{type(exc).__name__}: {exc}",
+                                elapsed_ms=(time.perf_counter() - t0) * 1000,
+                                write_attempted=None, executor=self.name)
         receipt.setdefault("elapsed_ms", round((time.perf_counter() - t0) * 1000, 2))
         return receipt
 
