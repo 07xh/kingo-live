@@ -497,20 +497,34 @@ async function prepareElect(sess, kcdm, skbjdm, xf) {
   return { plain: buildElectPlain(f, { skbjdm: skb, skbzdm, outnumber, zfx_m: zfx }), skb };
 }
 
-async function cmdGrab(sess, arg, { conc = 3, skb = '', dry = false, retry = 8 }) {
+async function cmdGrab(sess, arg, { conc = 1, skb = '', dry = false, retry = 1 }) {
   const { kcdm, skbjdm: fromArg } = resolveTarget(arg);
   const target = skb || fromArg;
+  // Backward-compatible flags are accepted but must never cause repeated
+  // submissions to an official school endpoint.
+  if (conc !== 1 || retry !== 1) {
+    console.log('提交保护已忽略旧并发/重试参数：同一课程最多一次物理写入');
+  }
 
-  // 从课程列表补 xf
+  let first = null;
+  if (!dry) {
+    if (process.env.KINGO_ALLOW_SINGLE_SUBMIT !== '1') {
+      return { code: 'BLOCKED', msg: '真实提交默认关闭；需官方验收和明确授权' };
+    }
+    first = await initSession(sess);
+    if (String(sess.status) !== '200' || String(first.isValidTimerange) !== '1'
+        || !first.xh || first.xn == null || first.xqM == null) {
+      return { code: 'BLOCKED', msg: '官方选课窗口或本人身份未通过校验' };
+    }
+  }
+
   let xf = '';
   try {
     const { rows } = await fetchCourseList(sess);
     const hit = rows.find((r) => (r.skbjdm || '').startsWith(kcdm) || (r.kc || '').includes(kcdm));
     if (hit) xf = hit.xf || '';
-  } catch { /* 列表失败不阻塞 */ }
-
-  console.log(`目标 kcdm=${kcdm}  skbjdm=${target || '(自动选择)'}  并发=${conc}${dry ? '  DRY' : ''}`);
-
+  } catch { /* Only the offline display may proceed without this evidence. */ }
+  console.log(`目标 kcdm=${kcdm}  skbjdm=${target || '(自动选择)'}${dry ? '  DRY' : ''}`);
   const prep = await prepareElect(sess, kcdm, target, xf);
   if (prep.error) {
     console.log('终止：' + prep.error);
@@ -523,25 +537,24 @@ async function cmdGrab(sess, arg, { conc = 3, skb = '', dry = false, retry = 8 }
     return { code: 'DRY' };
   }
 
-  let done = false;
-  const t0 = now();
-  const STOP = ['OK', 'DUP', 'CONFLICT', 'LIMIT', 'AUTH', 'NOTSTU', 'CLOSED', 'OTHER'];
-  const workers = Array.from({ length: Math.max(1, conc) }, async (_, i) => {
-    for (let n = 0; n < retry && !done; n++) {
-      const r = await submitElect(sess, prep.plain).catch((e) => ({ code: 'ERR', msg: e.message }));
-      console.log(`  [w${i}#${n}] ${now() - t0}ms ${r.code}  ${r.msg || ''}`);
-      if (STOP.includes(r.code)) { done = true; return r; }
-      // 频控退避：指数增长，避免把会话送进黑名单
-      if (r.code === 'THROTTLE') await sleep(600 * (n + 1));
-      else if (r.code === 'FULL') await sleep(120 + Math.random() * 180);
-      else await sleep(200);
-    }
-    return { code: 'GIVEUP' };
+  // Before reserving the shared course-level intent, refresh the official
+  // response. Reject account/semester changes during preparation.
+  const fresh = await initSession(sess);
+  if (String(first.xh) !== String(fresh.xh)
+      || String(first.xn) !== String(fresh.xn)
+      || String(first.xqM) !== String(fresh.xqM)) {
+    return { code: 'BLOCKED', msg: '准备阶段账号或学期已变化' };
+  }
+  const scope = nodeScopeFromWindow({
+    school: BASE, response: fresh, status: sess.status,
+    expectedAccount: String(first.xh),
+    canonicalTerm: process.env.KINGO_CANONICAL_TERM,
+    observedTerm: process.env.KINGO_SOURCE_TERM,
+    courseId: kcdm, classId: prep.skb,
   });
-  const results = await Promise.all(workers);
-  const win = results.find((r) => r.code === 'OK');
-  console.log(win ? '\n✅ 选课成功' : '\n未成功: ' + results.map((r) => r.code).join(','));
-  return win || results[0];
+  const result = await submitElect(sess, prep.plain, scope);
+  console.log(`提交状态 ${result.code}：${result.msg}`);
+  return result;
 }
 
 // ============ 命令: watch ============
@@ -561,11 +574,11 @@ async function cmdWatch(sess, arg, interval = 3) {
         console.log(`[${t}] #${i} ★ 出现余量 ${avail.map((x) => `${x.r.skbjdm}(余${x.c.left})`).join(' ')} → 立即提交`);
         // 命中即用该班，不再自动挑班，省一次往返
         const r = await cmdGrab(sess, kcdm, {
-          conc: Number(sess.watchConc) || 2,
+          conc: 1,
           skb: avail[0].r.skbjdm,
-          retry: 4,
+          retry: 1,
         });
-        if (r && r.code === 'OK') return;
+        if (r && (r.code === 'PENDING' || r.code === 'BLOCKED')) return;
       }
     } catch (e) {
       console.log(`  轮询异常: ${e.message}`);
