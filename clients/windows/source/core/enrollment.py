@@ -66,6 +66,9 @@ class RunReport:
     states: dict[str, str]
     halted: bool
     transitions: dict[str, tuple[Transition, ...]] = field(default_factory=dict)
+    # Transport outcome for THIS run, never a claim of official selection:
+    # not_sent / response_received / unknown.
+    delivery: dict[str, str] = field(default_factory=dict)
 
 
 class VerifiedGateway(Protocol):
