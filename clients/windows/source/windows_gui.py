@@ -43,7 +43,7 @@ from core.offline_benchmark import format_benchmark, run_offline_benchmark
 from core.official_portal_schedule import OfficialPortalAppointment, prepare_appointment, format_countdown
 from core.session_probe import SessionProbeResult, probe_own_session
 from core.official_entries import OFFICIAL_ENTRIES, probe_official_login_surfaces
-from core.scheduled_ui_bridge import prepare_scheduled_plan
+from core.scheduled_ui_bridge import prepare_scheduled_plan, prepare_ops_targets
 from core.enrollment_schedule import ScheduledRunReport
 from core.enrollment_delivery import display_delivery
 from core.time_sync import TimeSync
@@ -513,7 +513,8 @@ class Application(tk.Tk):
         try:
             config = read_config(Path(self.path.get()), offline=True)
             plan = prepare_scheduled_plan(config)
-        except (ValueError, TypeError, KeyError, OSError) as exc:
+            ops_targets = prepare_ops_targets(plan)
+        except (ValueError, TypeError, KeyError, OSError, ImportError) as exc:
             self.status.set("自动选课计划预检未通过｜没有启动后台任务")
             self.log("本地自动选课计划预检未通过；未连接学校。")
             messagebox.showwarning("定时计划字段待完善", str(exc))
@@ -524,6 +525,7 @@ class Application(tk.Tk):
             "本地定时计划检查完成（不是抢课启动）",
             f"计划时间（北京时间）：{plan.target_time}\n"
             f"精确课程及教学班：{len(plan.targets)} 个\n"
+            f"ops 统一目标转换：{len(ops_targets)} 条（仅离线身份映射）\n"
             f"窗口检查间隔：{plan.poll_interval_range[0]}–{plan.poll_interval_range[1]} 秒\n"
             f"最长等待窗口：{plan.max_wait_minutes} 分钟\n\n"
             "这只代表本地字段和调度器参数有效。"
