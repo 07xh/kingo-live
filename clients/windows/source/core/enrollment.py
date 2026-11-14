@@ -66,6 +66,9 @@ class RunReport:
     states: dict[str, str]
     halted: bool
     transitions: dict[str, tuple[Transition, ...]] = field(default_factory=dict)
+    # Transport outcome for THIS run, never a claim of official selection:
+    # not_sent / response_received / unknown.
+    delivery: dict[str, str] = field(default_factory=dict)
 
 
 class VerifiedGateway(Protocol):
@@ -305,13 +308,10 @@ class AttemptJournal:
             data["attempts"][fingerprint] = new_state
             self._write(data)
             return
-        if current is None and new_state == "confirmed":
-            legacy = self._legacy_fingerprint(target)
-            if legacy in data["legacy_attempts"]:
-                data["legacy_attempts"].remove(legacy)
-                data["attempts"][fingerprint] = "confirmed"
-                self._write(data)
-                return
+        # V1 entries lacked an account identity and must never be converted
+        # into a scoped confirmation by the ordinary V2 API. Even a current
+        # official match proves this account is enrolled, not which account
+        # issued the historic attempt. Keep the legacy fingerprint intact.
         raise EnrollmentNotReady("提交记录状态冲突，须先人工核对")
 
     def record_rejected(self, target: Target) -> None:

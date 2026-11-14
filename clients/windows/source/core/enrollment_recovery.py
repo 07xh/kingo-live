@@ -39,6 +39,7 @@ class RecoveryStatus(str, Enum):
     PENDING = "pending"
     REJECTED = "rejected"
     CONFIRMED_MISMATCH = "confirmed_mismatch"
+    LEGACY_SCOPE_UNVERIFIED = "legacy_scope_unverified"
     NOT_ATTEMPTED = "not_attempted"
     UNAVAILABLE = "unavailable"
 
@@ -67,6 +68,7 @@ class RecoveryReport:
             entry.key for entry in self.entries
             if entry.status in (RecoveryStatus.PENDING,
                                 RecoveryStatus.CONFIRMED_MISMATCH,
+                                RecoveryStatus.LEGACY_SCOPE_UNVERIFIED,
                                 RecoveryStatus.UNAVAILABLE)
         )
 
@@ -83,6 +85,14 @@ def _check_readback_scope(gateway: ReadbackGateway, journal: AttemptJournal) -> 
     if (getattr(gateway, "account_scope", None) != journal.account_scope
             or getattr(gateway, "enrollment_semester", None) != journal.semester):
         raise EnrollmentNotReady("官方账号或学期与本地提交记录不匹配")
+    # Read-only recovery needs the SAME verified school identity as the
+    # write gate; a matching display alias alone cannot authorize recovery.
+    if journal.shared_intent_db is not None:
+        if (getattr(gateway, "verified_account_id", None)
+                != journal.verified_account_id
+                or getattr(gateway, "verified_school_origin", None)
+                != journal.school_origin):
+            raise EnrollmentNotReady("只读恢复的真实账号或学校来源与共享记录不一致")
 
 
 async def reconcile_pending(gateway: ReadbackGateway, journal: AttemptJournal,
@@ -92,8 +102,8 @@ async def reconcile_pending(gateway: ReadbackGateway, journal: AttemptJournal,
     - Works even when the enrollment window is closed.
     - Never calls `submit_once`, `selection_window`, or `list_offerings`.
     - Does not clear pending records on absent, stale or unreadable readbacks.
-    - May mark a pending/rejected/legacy attempt as confirmed only after an
-      authoritative positive match. The HMAC journal remains account scoped.
+    - May mark a scope-bound pending/rejected attempt as confirmed only
+      after an authoritative positive match. V1 account-unbound intents stay pending. The HMAC journal remains account scoped.
     - Reports unresolved *unlisted* intents without trying to guess their
       original identifiers.
     """
@@ -140,7 +150,12 @@ async def reconcile_pending(gateway: ReadbackGateway, journal: AttemptJournal,
             )
             selected = verdict.state is VerificationState.CONFIRMED
 
-            if selected and state in ("pending", "legacy_pending", "rejected"):
+            if state == "legacy_pending":
+                # V1 fingerprints have no account scope. A positive official
+                # selection does not establish ownership of the old attempt.
+                # Preserve the legacy fence until an audited manual migration.
+                status = RecoveryStatus.LEGACY_SCOPE_UNVERIFIED
+            elif selected and state in ("pending", "rejected"):
                 # Never mark confirmed based on transport acknowledgement.
                 # Journal will reject unexpected state transitions.
                 journal.record_confirmed(target)

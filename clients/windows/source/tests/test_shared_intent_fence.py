@@ -84,6 +84,44 @@ class WindowsSharedFenceTests(unittest.TestCase):
                 self.assertEqual(gateway.writes, [])
                 self.assertFalse(self.db.exists())
 
+    def test_readonly_recovery_rejects_wrong_official_account_or_school(self):
+        journal = self.journal()
+        journal.reserve_before_write(self.target)
+        original = (self.dir / "windows.json").read_bytes()
+        for attr, value in (
+            ("verified_account_id", "other-official-account"),
+            ("verified_school_origin", "https://another.invalid"),
+        ):
+            with self.subTest(field=attr):
+                gateway = self.gateway()
+                gateway.enrolled.add(("C001", "J01"))
+                setattr(gateway, attr, value)
+                engine = EnrollmentEngine(
+                    gateway, journal, user_opted_in=False,
+                    institution_permits_write=False)
+                with self.assertRaises(EnrollmentNotReady):
+                    asyncio.run(engine.reconcile_pending([self.target]))
+                self.assertEqual(gateway.reads, 0)
+                self.assertEqual(gateway.writes, [])
+                self.assertEqual((self.dir / "windows.json").read_bytes(), original)
+                self.assertEqual(journal.status(self.target), "pending")
+
+    def test_readonly_recovery_uses_matching_verified_identity_outside_window(self):
+        journal = self.journal()
+        journal.reserve_before_write(self.target)
+        gateway = self.gateway()
+        gateway.enrolled.add(("C001", "J01"))
+        gateway.official_window_verified = False
+        gateway.official_write_verified = False
+        engine = EnrollmentEngine(
+            gateway, journal, user_opted_in=False,
+            institution_permits_write=False)
+        report = asyncio.run(engine.reconcile_pending([self.target]))
+        self.assertEqual(report.states["T"].value, "confirmed")
+        self.assertEqual(journal.status(self.target), "confirmed")
+        self.assertEqual(gateway.writes, [])
+        self.assertEqual(gateway.window_calls, 0)
+
     def test_shared_database_unavailable_leaves_local_unmodified(self):
         self.db.mkdir()
         journal = self.journal()

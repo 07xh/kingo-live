@@ -305,14 +305,17 @@ class AutomaticEnrollmentTest(unittest.TestCase):
             self.journal.status(self.a)
 
 
-    def test_legacy_pending_is_resolved_when_official_enrollment_appears(self):
+    def test_legacy_unbound_intent_kept_when_current_account_has_same_course(self):
         old = self.journal._legacy_fingerprint(self.a)
         self.path.write_text(json.dumps({"version": 1, "attempts": [old]}), encoding="utf-8")
         fake = FakeOfficialGateway([Offering("COURSE-1", "CLASS-1", 1)],
                                    enrolled={("COURSE-1", "CLASS-1")})
         report = self.run_engine(self.engine(fake))
-        self.assertEqual(report.states["A"], "已在官方选课记录中")
-        self.assertEqual(self.journal.status(self.a), "confirmed")
+        self.assertTrue(report.halted)
+        self.assertIn("无账号归属", report.states["A"])
+        self.assertEqual(report.delivery["A"], "not_sent")
+        self.assertEqual(self.journal.status(self.a), "legacy_pending")
+        self.assertEqual(fake.writes, [])
 
     def test_existing_course_in_another_class_satisfies_its_alternative_group(self):
         fake = FakeOfficialGateway(

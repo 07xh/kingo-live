@@ -140,6 +140,26 @@ class ScheduledGuiTests(unittest.TestCase):
         self.assertTrue(any("保护性停止" in str(c)
                             for c in app.status.set.call_args_list))
 
+    def test_scheduled_result_displays_per_target_delivery_without_claiming_success(self):
+        app = stub()
+        app.scheduled_worker = object()
+        app.table = Mock()
+        app.table.exists.return_value = True
+        outcome = RunReport(
+            {"A": "本次未操作", "B": "官方记录未确认",
+             "C": "写入结果不确定"}, True,
+            delivery={"A": "not_sent", "B": "response_received", "C": "unknown"})
+        app.events.put(MonitorEvent(
+            "scheduled_result", ScheduledRunReport("engine_halted", outcome, 1, 0)))
+        Application.poll(app)
+        labels = {call.args[0]: call.args[2]
+                  for call in app.table.set.call_args_list}
+        self.assertIn("本次未发送", labels["A"])
+        self.assertIn("已收到提交回执", labels["B"])
+        self.assertIn("发送状态未知", labels["C"])
+        self.assertNotIn("选课成功", str(app.log.call_args_list))
+        self.assertIn("本轮提交状态", str(app.log.call_args_list))
+
     def test_stop_is_cooperative_and_not_a_kill(self):
         app = stub()
         app.scheduled_worker = Mock()
