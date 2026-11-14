@@ -27,6 +27,7 @@ from core.desktop_settings import load_config, quick_copy_value, resolve_state_f
 from core.demo import DemoReport, run_demo
 from desktop_editor import SettingsEditor
 from desktop_plans import PlanManager
+from desktop_history import open_history_window
 from desktop_tray import TrayController
 from desktop_scheduled_worker import DesktopScheduledWorker, ScheduledWorkerEvent
 from core.inspector import inspect_html
@@ -262,6 +263,8 @@ class Application(tk.Tk):
                                command=self.compare_local_course_snapshots)
         tools_menu.add_command(label="北化课表参数 · 离线调度测速", command=self.benchmark_offline)
         tools_menu.add_command(label="华水官方入口清单（离线）", command=self.show_official_entries)
+        tools_menu.add_command(label="本机历史记录体检（只读）",
+                               command=self.open_history_inspector)
         tools_menu.add_command(label="检测官方登录页可达性（手动）", command=self.probe_official_entries)
         menu.add_cascade(label="离线工具", menu=tools_menu)
         app_menu = tk.Menu(menu, tearoff=False)
@@ -274,6 +277,13 @@ class Application(tk.Tk):
         self.after(300, self.poll)
         self.protocol("WM_DELETE_WINDOW", self.close)
         self.check_config()
+
+    def open_history_inspector(self) -> None:
+        """Open local-only journal inspection; never mutate recovery state."""
+        override = os.environ.get("KINGO_INTENT_DB")
+        sqlite_path = (Path(override).expanduser() if override
+                       else Path.home() / ".kingo-assistant" / "intent-journal.sqlite3")
+        open_history_window(self, default_sqlite=sqlite_path)
 
     def _build(self) -> None:
         top = ttk.Frame(self, padding=(16, 14))
