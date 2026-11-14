@@ -55,7 +55,8 @@ def main() -> int:
         "verify_tls": False,
         "budget": {"rate": 200, "burst": 50, "retry_after_ms": 50,
                    "database": str(d / "budget.sqlite")},
-        "journal": {"path": str(d / "intents.jsonl")},
+        "journal": {"path": str(d / "intents.jsonl"),
+                    "shared_intent_db": str(d / "shared-intents.sqlite3")},
         "targets": [{"course_id": "C001", "class_id": "T01"}],
         "strategy": {"poll_interval_ms": 1, "concurrency": 1, "burst": 0,
                      "sessions": 1, "proxies": [], "respect_retry_after": True,
@@ -65,6 +66,16 @@ def main() -> int:
     cfg["catalog"]["path"] = "/catalog"
     cfg["submit"]["path"] = "/submit"
     cfg["enrollment"]["path"] = "/enrollment"
+    cfg["enrollment"].update({
+        "official_verified": True,
+        "account_scope": cfg["account_scope"],
+        "semester": cfg["xnxq"],
+        "response_account_path": "data.account_scope",
+        "response_semester_path": "data.semester",
+    })
+    # The CLI uses the selftest loopback handler but a distinct fictional
+    # account. Explicitly bind the mock response to that same identity.
+    Handler.state.account_scope = cfg["account_scope"]
     cfg["clock"]["path"] = "/catalog"
     cfg["clock"]["samples"] = 3
     cfg["warmup"]["path"] = "/catalog"

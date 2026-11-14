@@ -60,6 +60,7 @@ from pathlib import Path
 # Share the same durable per-intent guard with the Qiangke CLI.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from qiangke.qk.intent_journal import IntentJournal
+from contracts.enrollment_evidence import pending_receipt, VerificationState
 
 BASE = "https://jwmis.ncwu.edu.cn/hsjw/"
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -281,7 +282,9 @@ def judge(raw):
         return
     txt = raw.decode("gb18030", "replace")
     plain = _txt(txt)
-    print(c("90", f"已接收接口响应 {len(raw)}B；响应正文已隐藏，结果待官方逐课程核验"))
+    verdict = pending_receipt()
+    assert verdict.state is VerificationState.PENDING
+    print(c("90", f"已接收接口响应 {len(raw)}B；响应正文已隐藏；当前结果={verdict.state.value}，待官方逐课程核验"))
     ok = ["选课成功", "成功", "保存成功"]
     full = ["人数已满", "容量已满", "已满", "超过限选"]
     dup = ["已经选", "已选过", "重复", "不能重复"]

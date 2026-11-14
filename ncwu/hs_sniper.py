@@ -73,6 +73,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from qiangke.qk.intent_journal import IntentJournal
+from contracts.enrollment_evidence import pending_receipt, VerificationState
 
 BASE = "https://jwmis.ncwu.edu.cn/hsjw"
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -653,7 +654,9 @@ class Sniper:
         time.sleep(float(self.cfg.get("verify_delay", 0.4)))
         info = self.k.selected(self.xn, self.xq, self.xh) or {}
         after = info.get("yxms")
-        log("验证", f"已选门数 {before} → {after}；门数变化不能确认目标课程，结果待核验", "33")
+        verdict = pending_receipt()
+        assert verdict.state is VerificationState.PENDING
+        log("验证", f"已选门数 {before} → {after}；当前结果={verdict.state.value}，无官方逐课程明细", "33")
         return None
 
     # ── 主循环 ──

@@ -37,7 +37,12 @@
     "columns": {
       "course_id": "kcid",
       "class_id": "skbj"
-    }
+    },
+    "official_verified": false,
+    "account_scope": "",
+    "semester": "",
+    "response_account_path": "",
+    "response_semester_path": ""
   },
   "clock": {
     "header": "Date",
@@ -51,16 +56,41 @@
   "warmup": {
     "path": "/TARGET_CATALOG_PATH",
     "method": "GET",
-    "auth_ok_status": [200],
-    "login_markers": ["登录", "请先登录", "login", "session expired"],
+    "auth_ok_status": [
+      200
+    ],
+    "login_markers": [
+      "登录",
+      "请先登录",
+      "login",
+      "session expired"
+    ],
     "probes": 2,
     "keep_alive": false
   },
   "business": {
     "success_field": "ok",
-    "success_values": [true, 1, "1", "true", "success", "ok"],
-    "full_markers": ["已满", "名额已满", "无余量", "no seat", "full"],
-    "window_markers": ["不是有效的选课时间", "未开放", "尚未开始", "not in selection time"],
+    "success_values": [
+      true,
+      1,
+      "1",
+      "true",
+      "success",
+      "ok"
+    ],
+    "full_markers": [
+      "已满",
+      "名额已满",
+      "无余量",
+      "no seat",
+      "full"
+    ],
+    "window_markers": [
+      "不是有效的选课时间",
+      "未开放",
+      "尚未开始",
+      "not in selection time"
+    ],
     "backoff_ms": 200
   },
   "budget": {
@@ -70,10 +100,11 @@
     "database": "kingo-budget.sqlite"
   },
   "journal": {
-    "path": "kingo-intents.jsonl"
+    "path": "kingo-intents.jsonl",
+    "shared_intent_db": ""
   },
   "strategy": {
-    "poll_interval_ms": 60000.0,
+    "poll_interval_ms": 60000,
     "concurrency": 1,
     "burst": 0,
     "sessions": 1,
@@ -82,7 +113,7 @@
     "prebuild": false,
     "race_repeat": 1,
     "direct_api": false,
-    "timeout": 5.0,
+    "timeout": 5,
     "cycles": 1
   },
   "targets": [

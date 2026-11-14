@@ -2,8 +2,14 @@ name: ci
 
 on:
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
+
+# Prevent redundant runs for successive commits on the same PR.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 env:
   # Windows runners default to cp1252; catalog bodies contain Chinese text.
