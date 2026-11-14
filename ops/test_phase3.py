@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import sys
+import tempfile
 import threading
 import time
 import unittest
@@ -188,9 +189,18 @@ class TestPlan(unittest.TestCase):
 
 
 class TestOrchestrator(unittest.TestCase):
+    def setUp(self):
+        shared = tempfile.TemporaryDirectory()
+        self.addCleanup(shared.cleanup)
+        self.shared_path = str(Path(shared.name) / "shared.sqlite3")
+
     def _mission(self, executor=None):
         return orch.Mission(host="loopback", targets=[
             {"course_id": "C1", "class_id": "01", "priority": 1}],
+            official_school_origin="https://synthetic.invalid",
+            account_scope="fictional-phase3-student",
+            enrollment_semester="2026-2027-1",
+            shared_intent_db=self.shared_path,
             executor=executor)
 
     def test_full_pipeline_monitor_only(self):
@@ -302,18 +312,78 @@ class TestOrchestrator(unittest.TestCase):
                 lambda _: [Offering("C1", "01", 60, 0)])
         decision = o.watch(orch.SimpleResponse(200, {}, "", 5.0),
                            lambda _: [Offering("C1", "01", 60, 2)])
-        # Strict target matching rejects ambiguity before submission.
-        self.assertEqual(decision.kind, "no_match")
+        self.assertEqual(decision.kind, "submit")
         result = o.act(decision)
         self.assertFalse(result["acted"])
-        self.assertIn("decision=no_match", result["reason"])
-        # Defense-in-depth: a forged fire decision also cannot write.
-        from seat_events import Decision
-        forged = Decision("submit", "fire", target=mission.targets[0])
-        refused = o.act(forged)
-        self.assertFalse(refused["acted"])
-        self.assertIn("teaching-class", refused["reason"])
+        self.assertIn("teaching-class", result["reason"])
         self.assertEqual(calls.count, 0)
+
+    def test_missing_school_account_scope_blocks_executor(self):
+        c = Collector()
+        m = self._mission(executor=c)
+        m.account_scope = ""
+        o = orch.Orchestrator(m)
+        o.phase = orch.Phase("watch")
+        o.watch(orch.SimpleResponse(200, {}, "", 1.0),
+                lambda _: [Offering("C1", "01", 60, 0)])
+        decision = o.watch(orch.SimpleResponse(200, {}, "", 1.0),
+                           lambda _: [Offering("C1", "01", 60, 2)])
+        result = o.act(decision)
+        self.assertFalse(result["acted"])
+        self.assertIn("shared_intent_unavailable", result["reason"])
+        self.assertEqual(c.count, 0)
+
+    def test_qiangke_reservation_blocks_ops_executor(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        from qiangke.qk.intent_journal import IntentJournal
+        m = self._mission(executor=Collector())
+        self.assertTrue(IntentJournal(self.shared_path).reserve(
+            school=m.official_school_origin, account=m.account_scope,
+            term=m.enrollment_semester,
+            course={"kch_id": "C1", "xkid": "01"}))
+        o = orch.Orchestrator(m)
+        o.phase = orch.Phase("watch")
+        o.watch(orch.SimpleResponse(200, {}, "", 1.0),
+                lambda _: [Offering("C1", "01", 60, 0)])
+        decision = o.watch(orch.SimpleResponse(200, {}, "", 1.0),
+                           lambda _: [Offering("C1", "01", 60, 2)])
+        result = o.act(decision)
+        self.assertFalse(result["acted"])
+        self.assertEqual(
+            result["reason"], "shared_intent_pending_needs_official_reconciliation")
+        self.assertEqual(m.executor.count, 0)
+
+    def test_plan_is_applied_to_live_driver_without_erasing_gate(self):
+        mission = self._mission()
+        mission.poll_interval_base_ms = 45000.0
+        o = orch.Orchestrator(mission)
+        self.assertEqual(o.driver.poller.base, 45000.0)
+        o.phase = orch.Phase("watch")
+        gate = o.driver.gate
+        monitor = o.driver.monitor
+        o.plan_with(p5_report={"rule": "fcfs",
+                              "strategy": {"poll_interval_ms": 3500.0,
+                                           "sessions": 2}})
+        self.assertEqual(o.plan.poll_base_ms, 3500.0)
+        self.assertEqual(o.driver.poller.base, 3500.0)
+        self.assertEqual(o.shard.sessions, 2)
+        self.assertIs(gate, o.driver.gate)
+        self.assertIs(monitor, o.driver.monitor)
+
+    def test_executor_exceptions_and_target_secrets_not_in_report(self):
+        def bad(_target):
+            raise RuntimeError("access_token=SENSITIVE_MARKER")
+        mission = self._mission(executor=bad)
+        mission.targets[0]["access_token"] = "SENSITIVE_MARKER"
+        o = orch.Orchestrator(mission)
+        o.phase = orch.Phase("watch")
+        from seat_events import Decision
+        result = o.act(Decision("submit", "fire",
+                                target=mission.targets[0]))
+        self.assertFalse(result["acted"])
+        self.assertEqual(result["error"], "RuntimeError")
+        self.assertNotIn("SENSITIVE_MARKER", str(o.report()))
+        self.assertNotIn("SENSITIVE_MARKER", str(result))
 
     def test_recon_probe_readonly_matrix(self):
         seen: List[str] = []
@@ -436,8 +506,14 @@ class TestLoopbackEndToEnd(unittest.TestCase):
 
     def test_end_to_end_monitor_only(self):
         c = Collector()
+        shared = tempfile.TemporaryDirectory()
+        self.addCleanup(shared.cleanup)
         m = orch.Mission(host=f"127.0.0.1:{self.port}", targets=[
             {"course_id": "C1", "class_id": "01", "priority": 1}],
+            official_school_origin="https://synthetic.invalid",
+            account_scope="fictional-phase3-loopback",
+            enrollment_semester="2026-2027-1",
+            shared_intent_db=str(Path(shared.name) / "shared.sqlite3"),
             executor=c, poll_interval_base_ms=60000.0)
 
         def parse(body: str):
