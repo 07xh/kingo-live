@@ -340,6 +340,8 @@ class TestDemo(unittest.TestCase):
     def test_demo_selfcheck(self):
         out = eb.demo()
         self.assertTrue(out["ok"])
+        self.assertFalse(out["officially_confirmed"])
+        self.assertIsNone(out["evidence"]["present"])
 
 
 if __name__ == "__main__":
