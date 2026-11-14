@@ -209,6 +209,7 @@ class ControlledEnrollmentTests(unittest.TestCase):
         self.assertTrue(report.halted)
         self.assertEqual(self.journal.status(self.target), "pending")
         self.assertEqual(len(fake.writes), 1)
+        self.assertEqual(report.delivery["A"], "unknown")
         second = FakeOfficialGateway([self.offer])
         # No record: must not replay the write.
         stopped = self.execute(self.engine(second), [self.target])
