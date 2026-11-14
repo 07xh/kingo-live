@@ -6,6 +6,7 @@ marked successful. Never return a path, ID, fingerprint, secret or raw line.
 """
 from __future__ import annotations
 
+from contextlib import closing
 from dataclasses import dataclass
 import base64
 import json
@@ -165,8 +166,11 @@ def shared_sqlite_summary(path: Optional[Path]) -> JournalSummary:
             return JournalSummary(kind, "missing")
         # SQLite URI with mode=ro guarantees this inspection cannot create
         # the database. No writable URI, schema migration or integrity fix.
-        with sqlite3.connect(p.resolve().as_uri() + "?mode=ro",
-                             uri=True, timeout=2) as db:
+        # sqlite3.Connection as a context manager commits transactions but
+        # does NOT close its file handle. Explicit closing is essential on
+        # Windows, otherwise cleanup/backups fail with WinError 32.
+        with closing(sqlite3.connect(p.resolve().as_uri() + "?mode=ro",
+                                     uri=True, timeout=2)) as db:
             db.execute("PRAGMA query_only=ON")
             meta = db.execute("SELECT value FROM metadata WHERE key='salt'").fetchone()
             if (meta is None or not isinstance(meta[0], str)
