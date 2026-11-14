@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
-from dataclasses import asdict
+from datetime import datetime
 import json
 from pathlib import Path
 from typing import Sequence
@@ -47,6 +47,36 @@ def summarize(records: Sequence[CourseOffering]) -> dict:
     }
 
 
+def _time_order(current: Sequence[CourseOffering],
+                before: Sequence[CourseOffering]) -> str:
+    """Check actual capture times, not filename order."""
+    if not current or not before or any(
+        row.observed_at is None for row in (*current, *before)
+    ):
+        return "unverified"
+    newest_prior = max(datetime.fromisoformat(x.observed_at) for x in before)
+    oldest_now = min(datetime.fromisoformat(x.observed_at) for x in current)
+    if oldest_now > newest_prior:
+        return "forward"
+    if (max(datetime.fromisoformat(x.observed_at) for x in current)
+            < min(datetime.fromisoformat(x.observed_at) for x in before)):
+        return "reversed"
+    return "overlapping"
+
+
+def _unique_exact(current: Sequence[CourseOffering],
+                  before: Sequence[CourseOffering]) -> tuple[list, list, int]:
+    """Exclude duplicate teaching-class keys from delta calculations."""
+    old_counts = Counter((x.course_id, x.class_id) for x in before if x.class_id)
+    new_counts = Counter((x.course_id, x.class_id) for x in current if x.class_id)
+    ambiguous = {key for key in old_counts.keys() | new_counts.keys()
+                 if old_counts[key] > 1 or new_counts[key] > 1}
+    def valid(rows):
+        return [normalize_readonly(x) for x in rows
+                if x.class_id and (x.course_id, x.class_id) not in ambiguous]
+    return valid(before), valid(current), len(ambiguous)
+
+
 def report_snapshot(current: Sequence[CourseOffering],
                     before: Sequence[CourseOffering] | None = None) -> dict:
     current = [from_standard_record(x.as_dict()) for x in current]
@@ -62,9 +92,13 @@ def report_snapshot(current: Sequence[CourseOffering],
     if before is not None:
         audit = compare_offerings(current, before)
         counts = Counter(x.verdict.value for x in audit.rows)
-        monitor = ReleaseMonitor()
-        monitor.observe([normalize_readonly(x) for x in before])
-        events = monitor.observe([normalize_readonly(x) for x in current])
+        order = _time_order(current, before)
+        old_exact, new_exact, excluded = _unique_exact(current, before)
+        events = []
+        if order == "forward":
+            monitor = ReleaseMonitor()
+            monitor.observe(old_exact)
+            events = monitor.observe(new_exact)
         result["previous"] = summarize(before)
         result["identity_comparison"] = {
             "exact": audit.exact,
@@ -75,6 +109,9 @@ def report_snapshot(current: Sequence[CourseOffering],
         result["observed_seat_changes"] = {
             "events": len(events),
             "counts": dict(sorted(Counter(e.kind for e in events).items())),
+            "time_order": order,
+            "skipped_ambiguous_class_identities": excluded,
+            "delta_comparison_enabled": order == "forward",
             "partial_snapshots_never_infer_disappearance": True,
         }
     return result
@@ -89,6 +126,7 @@ def selftest() -> None:
                        None, None, "2026-11-13T12:01:00+08:00")
     result = report_snapshot([b, c], [a])
     assert result["observed_seat_changes"]["counts"]["reopened"] == 1
+    assert result["observed_seat_changes"]["time_order"] == "forward"
     assert result["current"]["unknown_seat_count"] == 1
     assert result["identity_comparison"]["needs_review"] == 1
     encoded = json.dumps(result, ensure_ascii=False)

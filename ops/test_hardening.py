@@ -186,6 +186,17 @@ class HardeningTests(unittest.TestCase):
         classified = endpoints.classify([result])
         self.assertNotIn("SECRET_STUDENT", json.dumps(classified))
 
+    def test_ranker_requires_exact_teaching_class(self):
+        ranker = seat_events.TargetRanker()
+        offerings = [seat_events.Offering("C1", "01", 60, 3),
+                     seat_events.Offering("C1", "02", 60, 6)]
+        self.assertEqual(ranker.reorder([{"course_id": "C1"}], offerings), [])
+        self.assertEqual(ranker.reorder(
+            [{"course_id": "C1", "class_id": "03"}], offerings), [])
+        exact = ranker.reorder(
+            [{"course_id": "C1", "class_id": "02"}], offerings)
+        self.assertEqual([x["class_id"] for x in exact], ["02"])
+
     def test_demo_distinguishes_real_confirmation_from_clues(self):
         report = crosscheck.demo()
         statuses = [v["verdict"] for v in report["verdicts"]]

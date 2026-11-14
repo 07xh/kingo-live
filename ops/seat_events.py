@@ -245,13 +245,15 @@ class TargetRanker:
 
     @staticmethod
     def _match(offers: List[Offering], target: dict) -> Optional[Offering]:
+        # A course-only match cannot identify the intended teaching class.
+        course_id = str(target.get("course_id") or "").strip()
         want = str(target.get("class_id") or "").strip()
+        if not course_id or not want:
+            return None
         for o in offers:
-            if str(o.course_id) != str(target["course_id"]):
-                continue
-            if want and str(o.class_id) != want:
-                continue
-            return o
+            if (str(getattr(o, "course_id", "")).strip() == course_id
+                    and str(getattr(o, "class_id", "")).strip() == want):
+                return o
         return None
 
     def score(self, offer: Offering, priority: int = 1) -> float:

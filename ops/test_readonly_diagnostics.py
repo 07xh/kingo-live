@@ -46,6 +46,36 @@ class ReadonlyDiagnosticTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     read_snapshot(str(link))
 
+    def test_snapshot_order_is_not_assumed(self):
+        first = CourseOffering("ncwu.plan", "C1", "01", "Course", None, 0,
+                               "2026-11-13T12:00:00+08:00")
+        later = CourseOffering("ncwu.plan", "C1", "01", "Course", None, 3,
+                               "2026-11-13T12:01:00+08:00")
+        backwards = report_snapshot([first], [later])["observed_seat_changes"]
+        self.assertEqual(backwards["time_order"], "reversed")
+        self.assertEqual(backwards["events"], 0)
+        unknown = CourseOffering("ncwu.plan", "C1", "01", "Course", None, 3)
+        missing = report_snapshot([unknown], [first])["observed_seat_changes"]
+        self.assertEqual(missing["time_order"], "unverified")
+        self.assertEqual(missing["events"], 0)
+        same = CourseOffering("ncwu.plan", "C1", "01", "Course", None, 3,
+                              "2026-11-13T12:00:00+08:00")
+        overlap = report_snapshot([same], [first])["observed_seat_changes"]
+        self.assertEqual(overlap["time_order"], "overlapping")
+        self.assertEqual(overlap["events"], 0)
+
+    def test_duplicate_class_never_generates_delta(self):
+        first = CourseOffering("ncwu.plan", "C1", "01", "Course", None, 0,
+                               "2026-11-13T12:00:00+08:00")
+        later = CourseOffering("ncwu.plan", "C1", "01", "Course", None, 3,
+                               "2026-11-13T12:01:00+08:00")
+        report = report_snapshot([later, later], [first])
+        self.assertEqual(report["observed_seat_changes"]["time_order"], "forward")
+        self.assertEqual(report["observed_seat_changes"]
+                         ["skipped_ambiguous_class_identities"], 1)
+        self.assertEqual(report["observed_seat_changes"]["events"], 0)
+        self.assertGreater(report["identity_comparison"]["needs_review"], 0)
+
     def test_selftest(self):
         selftest()
 
