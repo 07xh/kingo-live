@@ -125,6 +125,18 @@ class ReadonlyRecoveryTests(unittest.TestCase):
         other = AttemptJournal(self.path, TERM, account_scope="other-account")
         self.assertEqual(other.status(self.target), "legacy_pending")
 
+    def test_v1_unscoped_fence_cannot_be_reassigned_through_v2_confirm_api(self):
+        fingerprint = self.journal._legacy_fingerprint(self.target)
+        self.path.write_text(json.dumps({
+            "version": 1, "attempts": [fingerprint]}), encoding="utf-8")
+        self.assertEqual(self.journal.status(self.target), "legacy_pending")
+        with self.assertRaises(EnrollmentNotReady):
+            self.journal.record_confirmed(self.target)
+        self.assertEqual(self.journal.status(self.target), "legacy_pending")
+        self.assertIn(
+            fingerprint,
+            json.loads(self.path.read_text(encoding="utf-8"))["legacy_attempts"])
+
     def test_rejected_attempt_can_only_become_confirmed_with_official_record(self):
         self.journal.reserve_before_write(self.target)
         self.journal.record_rejected(self.target)
