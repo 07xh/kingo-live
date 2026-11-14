@@ -25,12 +25,14 @@ class ScheduledUiAdmissionTests(unittest.TestCase):
     def test_local_preflight_never_starts_school_client(self):
         with patch("windows_gui.read_config", return_value={"local": True}) as read, \
              patch("windows_gui.prepare_scheduled_plan", return_value=self.plan) as prepare, \
+             patch("windows_gui.prepare_ops_targets", return_value=({"course_id": "A"}, {"course_id": "B"})) as mapped, \
              patch("windows_gui.KingoClient", side_effect=AssertionError("network")), \
              patch("windows_gui.messagebox.showinfo") as dialog:
             Application.inspect_scheduled_runner(self.app)
         read.assert_called_once()
         self.assertTrue(read.call_args.kwargs["offline"])
         prepare.assert_called_once()
+        mapped.assert_called_once_with(self.plan)
         dialog.assert_called_once()
         self.assertIn("真实自动选课未启用", str(self.app.status.set.call_args))
         self.assertIn("不是抢课启动", str(dialog.call_args))
